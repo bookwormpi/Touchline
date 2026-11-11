@@ -5,6 +5,7 @@ import argparse
 import io
 import logging
 import math
+from pathlib import Path
 import shlex
 import struct
 import subprocess
@@ -58,19 +59,36 @@ def parse_args():
 def make_sensor(hz):
     import board
     import busio
-    from vl53lxcx import (DATA_DISTANCE_MM, DATA_TARGET_STATUS,
-                          RESOLUTION_8X8, VL53L8CX)
+    import vl53lxcx
+
+    def find_firmware(name, required_size):
+        # Version 0.0.5 truncates paths containing dots before searching sys.path.
+        path = Path(vl53lxcx.__file__).resolve().parent / Path(name).name
+        try:
+            size = path.stat().st_size
+        except FileNotFoundError as exc:
+            raise FileNotFoundError(
+                f"Sensor firmware not found at {path}; reinstall circuitpython-vl53lxcx==0.0.5"
+            ) from exc
+        if size != required_size:
+            raise ValueError(f"Sensor firmware has incorrect size: {path} ({size} bytes)")
+        return str(path)
 
     i2c = busio.I2C(board.SCL, board.SDA)
     try:
-        sensor = VL53L8CX(i2c)
+        original_find_file = vl53lxcx._find_file
+        vl53lxcx._find_file = find_firmware
+        try:
+            sensor = vl53lxcx.VL53L8CX(i2c)
+        finally:
+            vl53lxcx._find_file = original_find_file
         if not sensor.is_alive():
             raise OSError("VL53L8CX not responding")
         sensor.init()
-        sensor.resolution = RESOLUTION_8X8
+        sensor.resolution = vl53lxcx.RESOLUTION_8X8
         sensor.ranging_freq = hz
-        sensor.start_ranging({DATA_DISTANCE_MM, DATA_TARGET_STATUS})
-    except (OSError, RuntimeError):
+        sensor.start_ranging({vl53lxcx.DATA_DISTANCE_MM, vl53lxcx.DATA_TARGET_STATUS})
+    except (OSError, RuntimeError, ValueError):
         i2c.deinit()
         raise
     return sensor, i2c

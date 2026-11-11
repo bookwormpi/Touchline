@@ -72,6 +72,12 @@ exact bonnet, its configuration, Pi, and other peripherals. GPIO 2 and 3 are
 reserved for I2C and are rejected; the application cannot detect all other
 bonnet conflicts for you.
 
+The `adafruit-hat` mapping assigns BCM 24 to the matrix's E row-address line.
+Do not use GPIO 24 for a button when that line is needed or connected; 64-row
+panels commonly need it. BCM 18 is used for output enable instead if you use
+the `adafruit-hat-pwm` mapping. Check the actual bonnet wiring and panel before
+choosing pins.
+
 | Button | Action |
 | --- | --- |
 | PREV / NEXT | Choose workout, or open and navigate the workout menu |
@@ -106,22 +112,27 @@ Hold OK deliberately: standby resets the current workout and its history.
    The application uses the `adafruit-hat` mapping, 64 rows, 128 columns,
    slowdown 5 and brightness 100; adjust `create_matrix()` in `interface_ai.py`
    to match your hardware.
-2. Install the [CircuitPython VL53LxCX driver](https://pypi.org/project/circuitpython-vl53lxcx/)
-   and Adafruit Blinka into the same Python environment, for example
-   `.venv/bin/python -m pip install circuitpython-vl53lxcx adafruit-blinka`.
-   The application initializes the sensor without toggling its optional LPN
-   reset pin, which is not configured by this project.
-3. Install the remaining Python packages with
-   `.venv/bin/python -m pip install -r requirements.txt` in that environment. Depending
+2. Install the application and sensor dependencies into the same environment:
+
+   ```sh
+   .venv/bin/python -m pip install -r requirements.txt
+   ```
+
+   This installs the pinned [CircuitPython VL53LxCX driver](https://pypi.org/project/circuitpython-vl53lxcx/)
+   and Adafruit Blinka. The application works around a firmware lookup bug in
+   driver version 0.0.5, and initializes the sensor without toggling its optional
+   LPN reset pin, which is not configured by this project. Depending
    on the Pi and gpiozero version, a supported gpiozero pin backend must also
    be installed/configured.
-4. Connect and verify the three buttons and the I2C sensor. Run with the BCM
+3. Connect and verify the three buttons and the I2C sensor. Run with the BCM
    numbers you verified (replace the placeholders):
 
    ```sh
    sudo .venv/bin/python main.py --prev-pin PREV_BCM --next-pin NEXT_BCM --ok-pin OK_BCM
    ```
 
+   Use the explicit `.venv/bin/python` path even when the environment is
+   activated: `sudo python` may select the system interpreter instead.
    The matrix driver often requires elevated privileges. Run from this
    directory with the Python environment containing all the dependencies.
    The application keeps privileges for I2C access. Check the terminal or

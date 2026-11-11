@@ -1,6 +1,8 @@
 import sys
+import tempfile
 import types
 import unittest
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 from detection import DetectionConfig, OccupancyDetector
@@ -161,6 +163,7 @@ class SensorTests(unittest.TestCase):
         driver.RESOLUTION_8X8 = 64
         driver.STATUS_VALID = 5
         driver.VL53L8CX = Mock(return_value=sensor)
+        driver._find_file = Mock()
         board = types.SimpleNamespace(SCL="scl", SDA="sda")
         busio = types.SimpleNamespace(I2C=Mock(return_value=i2c))
         with patch.dict(sys.modules, {"board": board, "busio": busio, "vl53lxcx": driver}):
@@ -177,13 +180,54 @@ class SensorTests(unittest.TestCase):
         sensor.is_alive.return_value = False
         i2c = Mock()
         driver = types.SimpleNamespace(DATA_DISTANCE_MM="distance", DATA_TARGET_STATUS="status",
-                                       RESOLUTION_8X8=64, VL53L8CX=Mock(return_value=sensor))
+                                       RESOLUTION_8X8=64, VL53L8CX=Mock(return_value=sensor),
+                                       _find_file=Mock())
         with patch.dict(sys.modules, {"board": types.SimpleNamespace(SCL=1, SDA=2),
                                       "busio": types.SimpleNamespace(I2C=Mock(return_value=i2c)),
                                       "vl53lxcx": driver}):
             with self.assertRaises(OSError):
                 make_sensor(10)
         i2c.deinit.assert_called_once_with()
+
+    def test_sensor_firmware_lookup_in_dotted_python_path(self):
+        with tempfile.TemporaryDirectory() as temp:
+            package = Path(temp) / ".venv/lib/python3.13/site-packages/vl53lxcx"
+            package.mkdir(parents=True)
+            firmware = package / "vl53l8cx_fw.bin"
+            firmware.write_bytes(b"x" * 88540)
+            driver = types.ModuleType("vl53lxcx")
+            driver.__file__ = str(package / "__init__.py")
+            driver._find_file = Mock(side_effect=ValueError("broken upstream lookup"))
+            original = driver._find_file
+            driver.DATA_DISTANCE_MM = "distance"
+            driver.DATA_TARGET_STATUS = "status"
+            driver.RESOLUTION_8X8 = 64
+            sensor = Mock()
+            sensor.is_alive.return_value = True
+
+            def construct(i2c):
+                broken_path = str(package).rsplit(".", 1)[0] + "/vl53l8cx_fw.bin"
+                self.assertEqual(driver._find_file(broken_path, 88540), str(firmware.resolve()))
+                return sensor
+
+            driver.VL53L8CX = construct
+            i2c = Mock()
+            modules = {"board": types.SimpleNamespace(SCL=1, SDA=2),
+                       "busio": types.SimpleNamespace(I2C=Mock(return_value=i2c)),
+                       "vl53lxcx": driver}
+            with patch.dict(sys.modules, modules):
+                self.assertEqual(make_sensor(10), (sensor, i2c))
+                self.assertIs(driver._find_file, original)
+                firmware.unlink()
+                with self.assertRaisesRegex(FileNotFoundError, "Sensor firmware not found"):
+                    make_sensor(10)
+                self.assertIs(driver._find_file, original)
+                i2c.deinit.assert_called_once_with()
+                firmware.write_bytes(b"bad")
+                with self.assertRaisesRegex(ValueError, "incorrect size"):
+                    make_sensor(10)
+                self.assertIs(driver._find_file, original)
+                self.assertEqual(i2c.deinit.call_count, 2)
 
 
 class InterfaceTests(unittest.TestCase):
