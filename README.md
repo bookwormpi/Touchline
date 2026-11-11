@@ -94,12 +94,13 @@ Hold OK deliberately: standby resets the current workout and its history.
 
 1. Enable I2C on the Pi and install/configure the
    [rpi-rgb-led-matrix Python bindings](https://github.com/hzeller/rpi-rgb-led-matrix)
-   for the bonnet and panel. The program uses the `adafruit-hat` mapping,
+   for the bonnet and panel. The library is installed separately and is not
+   included or updated by this repository. The program uses the `adafruit-hat` mapping,
    64 rows, 128 columns, slowdown 5 and brightness 100; adjust
    `create_matrix()` in `interface_ai.py` to match your hardware.
-2. Install the VL53L8CX Python driver that provides `vl53lxcx` and its
-   `board`/`busio` dependencies into the same Python environment. The sensor
-   API is the one used by the existing `tofmatrix.py` diagnostic.
+2. Install the [CircuitPython VL53LxCX driver](https://pypi.org/project/circuitpython-vl53lxcx/)
+   and Adafruit Blinka into the same Python environment, for example
+   `python -m pip install circuitpython-vl53lxcx adafruit-blinka`.
    The application initializes the sensor without toggling its optional LPN
    reset pin, which is not configured by this project.
 3. Install the remaining Python packages with
@@ -128,7 +129,8 @@ running the application.
 
 Use the existing diagnostic, for example
 `sudo /path/to/python tofmatrix.py --sensor-only`, to inspect the 8x8 valid
-distance readings for the empty approach area and for a swimmer at the wall.
+distance readings in millimeters for the empty approach area and for a swimmer
+at the wall. A dash indicates an invalid or non-positive reading.
 The diagnostic is a separate tool and does not run the workout.
 
 Choose entry and exit distances that separate those readings with a hysteresis
