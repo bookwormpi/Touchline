@@ -5,7 +5,7 @@ import argparse
 import time
 
 from calibrate_sensor import print_grid
-from main import close_sensor, make_sensor, read_grid
+from main import close_sensor, log_bad_frame, make_sensor, read_grid
 import sensor_config
 
 
@@ -26,6 +26,7 @@ def main():
         while True:
             if sensor.check_data_ready():
                 grid = read_grid(sensor)
+                log_bad_frame(grid, detector, "live diagnostic")
                 print_grid(grid, detector)
                 print(flush=True)
                 last_frame = time.monotonic()

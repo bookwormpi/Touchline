@@ -100,19 +100,57 @@ def close_sensor(sensor, i2c):
             LOG.warning("Could not release I2C: %s", exc)
 
 
+class SensorGrid(list):
+    """Distance/valid grid retaining the driver's original per-zone statuses."""
+
+    def __init__(self, rows, statuses):
+        super().__init__(rows)
+        self.statuses = statuses
+
+
+def _frame_values(values):
+    if values is None:
+        return None
+    return list(values[:256])
+
+
 def read_grid(sensor):
     from vl53lxcx import STATUS_VALID
     data = sensor.get_ranging_data()
-    if data is None or data.distance_mm is None or data.target_status is None:
+    distances = getattr(data, "distance_mm", None)
+    statuses = getattr(data, "target_status", None)
+    if distances is None or statuses is None:
+        LOG.warning("Bad sensor frame: missing data distances=%s target_status=%s",
+                    _frame_values(distances), _frame_values(statuses))
         raise ValueError("Sensor frame missing distance or target status data")
-    if len(data.distance_mm) != 64 or len(data.target_status) != 64:
+    if len(distances) != 64 or len(statuses) != 64:
+        LOG.warning("Bad sensor frame: incorrect lengths distances=%d target_status=%d "
+                    "distance_mm=%s target_status_values=%s (values capped at 256)",
+                    len(distances), len(statuses), _frame_values(distances), _frame_values(statuses))
         raise ValueError("Sensor frame must contain 64 distances and target statuses")
     LOG.debug("Sensor frame status_counts=%s positive_distances=%d",
-              dict(sorted(Counter(data.target_status).items())),
-              sum(value > 0 for value in data.distance_mm))
-    return [[(data.distance_mm[y * 8 + x],
-              data.target_status[y * 8 + x] == STATUS_VALID)
+              dict(sorted(Counter(statuses).items())),
+              sum(value > 0 for value in distances))
+    rows = [[(distances[y * 8 + x], statuses[y * 8 + x] == STATUS_VALID)
              for x in range(8)] for y in range(8)]
+    return SensorGrid(rows, [list(statuses[y * 8:y * 8 + 8]) for y in range(8)])
+
+
+def log_bad_frame(grid, detector, context):
+    """Log frames which cannot satisfy the detector's active-zone requirement."""
+    oriented = orient_grid(grid, detector.rotation)
+    count = len(active_readings(oriented, detector.dead_zones))
+    if count >= detector.config.min_valid:
+        return
+    statuses = getattr(grid, "statuses", None)
+    if statuses is not None:
+        statuses = orient_grid(statuses, detector.rotation)
+    LOG.warning("Bad sensor frame (%s): active_valid=%d required=%d rotation=%d "
+                "dead_zones=%s distance_mm=%s valid=%s target_status=%s",
+                context, count, detector.config.min_valid, detector.rotation,
+                sorted(detector.dead_zones),
+                [[distance for distance, _ in row] for row in oriented],
+                [[valid for _, valid in row] for row in oriented], statuses)
 
 
 class ButtonInput:
@@ -282,6 +320,8 @@ def run(args):
                         valid_count = len(readings)
                         if valid_count >= detector.config.min_valid:
                             usable_frames += 1
+                        else:
+                            log_bad_frame(grid, detector, f"workout frame {ready_frames}")
                         LOG.debug("Sensor frame active_valid=%d/%d near=%d min_valid=%d",
                                   valid_count, 64 - len(detector.dead_zones),
                                   sum(value <= detector.config.enter_mm for value in readings),

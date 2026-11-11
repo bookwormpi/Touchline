@@ -9,7 +9,7 @@ import struct
 import time
 
 from detection import active_readings, orient_grid
-from main import close_sensor, make_sensor, read_grid
+from main import close_sensor, log_bad_frame, make_sensor, read_grid
 import sensor_config
 
 LOG = logging.getLogger("touchline")
@@ -89,6 +89,8 @@ def capture(sensor, detector, duration):
                 print_grid(grid, detector)
             frames.append(grid)
             count = len(active_readings(orient_grid(grid, detector.rotation), detector.dead_zones))
+            if count < detector.config.min_valid:
+                log_bad_frame(grid, detector, f"calibration frame {len(frames)}")
             LOG.debug("Calibration frame=%d active_valid=%d", len(frames), count)
             last_frame = now
         elif now - last_frame > detector.config.frame_timeout:

@@ -179,7 +179,13 @@ sudo .venv/bin/python main.py --log-level DEBUG --log-file /tmp/touchline-sensor
 
 Logs include initialization stages, failure tracebacks and errno, data-ready and
 usable-frame counts, active valid zones, raw target status counts, timeouts,
-and reconnect attempts. At DEBUG the per-frame output can grow quickly; stop
+and reconnect attempts. Each frame with too few valid active zones is logged
+at WARNING with its full rotated 8x8 distances, validity, original target
+status codes and dead-zone coordinates. Malformed frames include the available
+raw arrays (capped at 256 values) and their lengths. A read failure before a
+frame is returned has no frame contents to log. Calibration and the live
+diagnostic log bad frames too. Logging every bad frame can grow quickly even
+at INFO; DEBUG also logs every good frame. Stop
 the program with Ctrl+C and share the log after checking it for private data.
 `ready_frames=0` indicates no frame became ready; frames with insufficient
 active valid zones instead indicate optical returns/configuration rather than

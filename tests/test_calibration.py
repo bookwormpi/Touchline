@@ -6,7 +6,7 @@ from unittest.mock import Mock, patch
 
 from calibrate_sensor import capture, main as calibrate_main, print_grid, print_summary, recommend
 from detection import DetectionConfig, OccupancyDetector, orient_grid
-from main import parse_args, read_grid, run
+from main import log_bad_frame, parse_args, read_grid, run
 from sensor_config import create_detector
 
 
@@ -99,6 +99,22 @@ class GuidedCalibrationTests(unittest.TestCase):
             with self.assertRaises(TimeoutError):
                 capture(sensor, self.detector, 10)
 
+    def test_capture_logs_invalid_frame_values(self):
+        sensor = Mock()
+        sensor.check_data_ready.return_value = True
+        driver = types.SimpleNamespace(STATUS_VALID=5)
+        sensor.get_ranging_data.return_value = types.SimpleNamespace(
+            distance_mm=[111] * 64, target_status=[9] * 64)
+        with patch.dict("sys.modules", {"vl53lxcx": driver}), \
+                patch("calibrate_sensor.time.monotonic", side_effect=[0, 0, 0, 2, 2]), \
+                patch("calibrate_sensor.time.sleep"), \
+                contextlib.redirect_stdout(io.StringIO()), \
+                self.assertLogs("touchline", level="WARNING") as logs:
+            frames = capture(sensor, self.detector, 1)
+        self.assertEqual(len(frames), 1)
+        self.assertIn("calibration frame 1", logs.output[0])
+        self.assertIn("target_status=[[9, 9", logs.output[0])
+
     def test_summary_exposes_per_zone_valid_counts(self):
         grids = [frame(1000), frame(2000)]
         grids[1][0][0] = (0, False)
@@ -145,6 +161,48 @@ class GuidedCalibrationTests(unittest.TestCase):
                 self.assertLogs("touchline", level="DEBUG") as logs:
             read_grid(sensor)
         self.assertIn("status_counts={5: 63, 9: 1}", logs.output[0])
+
+    def test_bad_frame_logs_raw_values_with_rotated_status_and_dead_zones(self):
+        sensor = Mock()
+        sensor.get_ranging_data.return_value.distance_mm = list(range(64))
+        sensor.get_ranging_data.return_value.target_status = [9] * 64
+        sensor.get_ranging_data.return_value.target_status[56] = 5
+        driver = types.SimpleNamespace(STATUS_VALID=5)
+        detector = OccupancyDetector(DetectionConfig(), rotation=90, dead_zones={(0, 0)})
+        with patch.dict("sys.modules", {"vl53lxcx": driver}):
+            grid = read_grid(sensor)
+        with self.assertLogs("touchline", level="WARNING") as logs:
+            log_bad_frame(grid, detector, "calibration frame 1")
+        self.assertIn("active_valid=0 required=8 rotation=90", logs.output[0])
+        self.assertIn("dead_zones=[(0, 0)]", logs.output[0])
+        self.assertIn("distance_mm=[[56, 48, 40", logs.output[0])
+        self.assertIn("target_status=[[5, 9, 9", logs.output[0])
+        self.assertIn("calibration frame 1", logs.output[0])
+
+    def test_malformed_frame_logs_available_values(self):
+        driver = types.SimpleNamespace(STATUS_VALID=5)
+        sensor = Mock()
+        sensor.get_ranging_data.return_value = types.SimpleNamespace(
+            distance_mm=None, target_status=bytes([5, 9]))
+        with patch.dict("sys.modules", {"vl53lxcx": driver}), \
+                self.assertLogs("touchline", level="WARNING") as logs:
+            with self.assertRaises(ValueError):
+                read_grid(sensor)
+        self.assertIn("distances=None target_status=[5, 9]", logs.output[0])
+        sensor.get_ranging_data.return_value = types.SimpleNamespace(
+            distance_mm=[111, 222], target_status=[5])
+        with patch.dict("sys.modules", {"vl53lxcx": driver}), \
+                self.assertLogs("touchline", level="WARNING") as logs:
+            with self.assertRaises(ValueError):
+                read_grid(sensor)
+        self.assertIn("distances=2 target_status=1", logs.output[0])
+        self.assertIn("distance_mm=[111, 222] target_status_values=[5]", logs.output[0])
+
+    def test_usable_frame_is_not_logged_as_bad(self):
+        grid = frame(1500)
+        with patch("main.LOG.warning") as warning:
+            log_bad_frame(grid, self.detector, "workout frame 1")
+        warning.assert_not_called()
 
     def test_application_reports_invalid_frames_separately_from_io_error(self):
         broken, recovered = Mock(), Mock()
