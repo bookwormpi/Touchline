@@ -204,8 +204,6 @@ def render_frame(session, detector, now, menu_index=None, clock=None, *,
             value = getattr(settings, field) if field else ""
             if field == "sound":
                 value = "ON" if value else "OFF"
-            elif field in ("enter_seconds", "exit_seconds"):
-                value = f"{value:.1f}"
             selected = index == navigation.settings_index
             text(4, 18 + row * 11, ("- " if selected else "  ") + label,
                  green if selected else white)

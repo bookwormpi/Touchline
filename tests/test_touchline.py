@@ -315,9 +315,9 @@ class InterfaceTests(unittest.TestCase):
         buttons = [Mock(is_pressed=False) for _ in range(3)]
         gpio = types.SimpleNamespace(Button=Mock(side_effect=buttons))
         args = types.SimpleNamespace(
-            detection=DetectionConfig(), settings_file="/nonexistent/touchline/settings.json",
+            settings_file="/nonexistent/touchline/settings.json",
             sounds_dir="/nonexistent/touchline/sounds",
-            prev_pin=17, next_pin=18, ok_pin=27, hz=10)
+            prev_pin=18, next_pin=19, ok_pin=25)
         with patch.dict(sys.modules, {"gpiozero": gpio}), \
                 patch("main.create_matrix", return_value=matrix), \
                 patch("main.Audio") as audio, \
@@ -353,10 +353,9 @@ class InterfaceTests(unittest.TestCase):
         inputs = Mock()
         inputs.poll.side_effect = [["ok"], ["ok"]] + [[]] * 30
         args = types.SimpleNamespace(
-            detection=DetectionConfig(enter_seconds=0.3, exit_seconds=0.5),
             settings_file="/nonexistent/touchline/settings.json",
             sounds_dir="/nonexistent/touchline/sounds",
-            prev_pin=18, next_pin=19, ok_pin=25, hz=10)
+            prev_pin=18, next_pin=19, ok_pin=25)
         gpio = types.SimpleNamespace(Button=Mock(return_value=Mock(is_pressed=False)))
         with patch.dict(sys.modules, {"gpiozero": gpio}), \
                 patch("main.create_matrix", return_value=matrix), \
@@ -385,10 +384,9 @@ class InterfaceTests(unittest.TestCase):
             if clock[0] > 103:
                 raise KeyboardInterrupt
         args = types.SimpleNamespace(
-            detection=DetectionConfig(frame_timeout=10),
             settings_file="/nonexistent/touchline/settings.json",
             sounds_dir="/nonexistent/touchline/sounds",
-            prev_pin=18, next_pin=19, ok_pin=25, hz=10)
+            prev_pin=18, next_pin=19, ok_pin=25)
         gpio = types.SimpleNamespace(Button=Mock(return_value=Mock(is_pressed=False)))
         driver = types.SimpleNamespace(STATUS_VALID=5)
         with patch.dict(sys.modules, {"gpiozero": gpio, "vl53lxcx": driver}), \
@@ -410,15 +408,19 @@ class SettingsAndNavigationTests(unittest.TestCase):
     def test_settings_round_trip_and_invalid_file(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "config" / "settings.json"
-            original = Settings(brightness=70, sound=False, enter_mm=900)
+            original = Settings(brightness=70, sound=False)
             self.assertEqual(load_settings(path, original), original)
             save_settings(path, original)
             self.assertEqual(load_settings(path, Settings()), original)
             path.write_text('{"brightness": 101}', encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "Cannot load settings"):
                 load_settings(path, Settings())
-            path.write_text('{"enter_seconds": NaN}', encoding="utf-8")
-            with self.assertRaisesRegex(ValueError, "finite"):
+            path.write_text('{"brightness": 70, "sound": false, "enter_mm": 900}', encoding="utf-8")
+            with self.assertLogs("touchline", level="WARNING") as logs:
+                self.assertEqual(load_settings(path, Settings()), original)
+            self.assertIn("sensor_config.py is authoritative", logs.output[0])
+            path.write_text('{"unexpected": 1}', encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "Cannot load settings"):
                 load_settings(path, Settings())
 
     def test_navigation_persists_edits_validates_and_returns_home(self):
@@ -467,7 +469,7 @@ class SettingsAndNavigationTests(unittest.TestCase):
         self.assertEqual(navigation.screen, "home")
         navigation.button("next", session, settings, save)
         navigation.button("ok", session, settings, save)
-        for index in range(8):
+        for index in range(3):
             navigation.settings_index = index
             for editing in (False, True):
                 navigation.editing = editing

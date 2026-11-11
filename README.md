@@ -90,15 +90,12 @@ choosing pins.
 The start screen offers `WORKOUT` and `SETTINGS`. Choose a workout with the
 arrows and OK, or choose `BACK` to return home. In settings, use the arrows to
 choose an item and OK to edit it; arrows change the value and OK finishes
-editing. Select `BACK` to return home. Brightness, sound, entry and exit
-distances, minimum occupied zones, and both debounce times are saved immediately.
-Values that violate sensor constraints are rejected, and save errors appear on
-screen and in the log. Settings are stored in `/var/lib/touchline/settings.json`
-by default; use `--settings-file` to choose another writable path. Saved settings
-override corresponding sensor command-line defaults. Deleting that file resets
-settings on the next launch. Entry and exit distances must satisfy
-`0 < entry < exit <= 4000` mm; debounce values range from 0.1 to 5 seconds.
-The minimum occupied zones cannot exceed `--min-valid` (default 8).
+editing. Select `BACK` to return home. Brightness and sound are saved immediately.
+Save errors appear on screen and in the log. Settings are stored in
+`/var/lib/touchline/settings.json` by default; use `--settings-file` to choose
+another writable path. Sensor settings are now defined only in `sensor_config.py`;
+previously saved sensor settings are ignored with a warning, while brightness
+and sound are retained. The former sensor command-line overrides were removed.
 
 `EXTRA REST` moves the due time to the later of now or the existing send-off,
 then adds the current set's configured extra-rest duration. It works while
@@ -139,11 +136,12 @@ Hold OK deliberately: standby resets the current workout and its history.
    LPN reset pin, which is not configured by this project. Depending
    on the Pi and gpiozero version, a supported gpiozero pin backend must also
    be installed/configured.
-3. Connect and verify the three buttons and the I2C sensor. Run with the BCM
-   numbers you verified (replace the placeholders):
+3. Connect and verify the three buttons and the I2C sensor. The BCM button
+   pins are defined in `sensor_config.py`: PREV 18, NEXT 19, and OK 25. Check
+   them against your actual hardware and edit that file if needed. Run:
 
    ```sh
-   sudo .venv/bin/python main.py --prev-pin PREV_BCM --next-pin NEXT_BCM --ok-pin OK_BCM
+   sudo .venv/bin/python main.py
    ```
 
    Use the explicit `.venv/bin/python` path even when the environment is
@@ -173,22 +171,60 @@ device is visible before running the calibration diagnostic. Check the Pi's I2C
 configuration and sensor documentation; avoid changing the bus speed blindly.
 Do not treat reconnection as proof that the hardware is stable.
 
+For detailed diagnostics, run the app with timestamped debug logging:
+
+```sh
+sudo .venv/bin/python main.py --log-level DEBUG --log-file /tmp/touchline-sensor.log
+```
+
+Logs include initialization stages, failure tracebacks and errno, data-ready and
+usable-frame counts, active valid zones, raw target status counts, timeouts,
+and reconnect attempts. At DEBUG the per-frame output can grow quickly; stop
+the program with Ctrl+C and share the log after checking it for private data.
+`ready_frames=0` indicates no frame became ready; frames with insufficient
+active valid zones instead indicate optical returns/configuration rather than
+proving an I2C disconnect. A malformed frame or I/O exception is logged with
+its operation. These observations cannot establish the root cause without
+testing the Pi, wiring, sensor and power.
+
 ## Poolside calibration
 
-Use the existing diagnostic, for example
-`sudo .venv/bin/python tofmatrix.py --sensor-only`, to inspect the 8x8 valid
-distance readings in millimeters for the empty approach area and for a swimmer
-at the wall. A dash indicates an invalid or non-positive reading.
-The diagnostic is a separate tool and does not run the workout.
+Stop the workout app first: only one program should control the sensor. Edit
+`sensor_config.py` on the Pi to configure `ROTATION_DEGREES` (clockwise 0, 90,
+180, or 270), `DEAD_ZONES`, thresholds, debounce, timeout and ranging frequency.
+Dead zones are `(row, column)` coordinates from 0 to 7, measured **after**
+rotation with `(0, 0)` at the top left. They are excluded from both the
+occupied count and valid count, and at least `MIN_VALID` zones must remain.
+Defaults are examples, not calibrated values.
 
-Choose entry and exit distances that separate those readings with a hysteresis
-gap (`--enter-mm` must be less than `--exit-mm`). The defaults, 1000 and
-1200 mm, are **examples**, not universal water-level thresholds. Configure
-`--min-zones`, `--min-valid`, `--enter-debounce`, `--exit-debounce`,
-`--sensor-timeout`, and `--hz` as needed; see `python main.py --help`.
+Run the live grid to inspect orientation, valid readings and dead zones:
+
+```sh
+sudo .venv/bin/python tofmatrix.py --sensor-only
+```
+
+`X` marks a dead zone; `-` is invalid or non-positive. Identify permanent
+obstructions and other lanes, edit the dead zones, and restart the diagnostic.
+Next, run the guided empty-area and swimmer-at-wall captures:
+
+```sh
+sudo .venv/bin/python calibrate_sensor.py --seconds 10 \
+  --log-level DEBUG --log-file /tmp/touchline-calibration.log
+```
+
+The tool displays the first grid of each capture, frame counts, valid-zone
+coverage and the median distance/valid-sample count for every zone. It compares
+the `MIN_ZONES`-th closest valid active distance in every frame. It only prints
+candidate entry/exit thresholds if at least five frames per condition have
+enough valid zones and the two captures are completely separated. Overlap,
+timeouts and incomplete frames fail explicitly without changing the code.
+Copy the printed values into `sensor_config.py`, review the other values,
+and restart the app. A successful recommendation applies only to the sampled
+conditions; it is not automatic calibration or proof of reliable detection.
+
 The occupied test counts valid zones at or below entry distance. A clear test
-requires fewer than `min-zones` valid readings below exit distance. Frames with
-fewer than `min-valid` valid readings cannot trigger transitions; prolonged
+requires fewer than `MIN_ZONES` valid readings below exit distance. Frames with
+fewer than `MIN_VALID` valid readings cannot trigger transitions; prolonged
 invalid or missing data produces a sensor error and reconnection attempts.
 Invalid frames interrupt an in-progress debounce.
 
@@ -196,9 +232,8 @@ Test a stationary swimmer, brief splashes, complete departures and repeated
 approaches, with no swimmer and with real pool conditions. Confirm the
 displayed progress against observed events and adjust placement, thresholds and
 debounce. A quiet water surface must produce enough valid *far* readings to
-identify departure. All 64 zones are used; positioning must avoid other lanes
-and fixed nearby structures. There is no automatic calibration or guaranteed
-operation through an enclosure.
+identify departure. Position and configure dead zones to avoid other lanes and
+fixed nearby structures. There is no guaranteed operation through an enclosure.
 
 ## Custom workouts and tests
 

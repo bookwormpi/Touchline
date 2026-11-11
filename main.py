@@ -2,15 +2,17 @@
 """Touchline application: display, buttons, VL53L8CX and workout controller."""
 
 import argparse
+from collections import Counter
 import logging
 from pathlib import Path
 import struct
 import time
 
 from audio import Audio
-from detection import DetectionConfig, OccupancyDetector
+from detection import active_readings, orient_grid
 from interface_ai import MENU_ITEMS, create_matrix, render_frame
 from navigation import Navigation
+import sensor_config
 from settings import Settings, load_settings, save_settings
 from workout import Phase, WorkoutSession
 
@@ -19,28 +21,21 @@ LOG = logging.getLogger("touchline")
 
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("prev", "next", "ok"):
-        parser.add_argument(f"--{name}-pin", type=int, required=True,
-                            help=f"BCM GPIO number for {name.upper()} button")
-    parser.add_argument("--enter-mm", type=int, default=1000)
-    parser.add_argument("--exit-mm", type=int, default=1200)
-    parser.add_argument("--min-zones", type=int, default=3)
-    parser.add_argument("--min-valid", type=int, default=8)
-    parser.add_argument("--enter-debounce", type=float, default=0.3)
-    parser.add_argument("--exit-debounce", type=float, default=0.5)
-    parser.add_argument("--sensor-timeout", type=float, default=1.0)
-    parser.add_argument("--hz", type=int, default=10, choices=range(1, 16))
     parser.add_argument("--settings-file", default="/var/lib/touchline/settings.json")
     parser.add_argument("--sounds-dir", default=str(Path(__file__).resolve().parent / "sounds"))
+    parser.add_argument("--log-level", choices=("INFO", "DEBUG"), default="INFO")
+    parser.add_argument("--log-file", help="append detailed logs to this file")
     args = parser.parse_args()
+    args.prev_pin = sensor_config.PREV_PIN
+    args.next_pin = sensor_config.NEXT_PIN
+    args.ok_pin = sensor_config.OK_PIN
     pins = (args.prev_pin, args.next_pin, args.ok_pin)
-    if len(set(pins)) != 3 or any(pin < 0 or pin > 27 or pin in (2, 3) for pin in pins):
-        parser.error("Use three distinct BCM pins in 0..27, excluding I2C pins 2 and 3")
+    if (any(type(pin) is not int or pin < 0 or pin > 27 or pin in (2, 3) for pin in pins)
+            or len(set(pins)) != 3):
+        parser.error("sensor_config.py must define three distinct BCM pins in 0..27, "
+                     "excluding I2C pins 2 and 3")
     try:
-        args.detection = DetectionConfig(
-            args.enter_mm, args.exit_mm, args.min_zones, args.min_valid,
-            args.enter_debounce, args.exit_debounce, args.sensor_timeout,
-        )
+        sensor_config.create_detector()
     except ValueError as exc:
         parser.error(str(exc))
     return args
@@ -64,6 +59,7 @@ def make_sensor(hz):
             raise ValueError(f"Sensor firmware has incorrect size: {path} ({size} bytes)")
         return str(path)
 
+    LOG.info("Sensor init: opening I2C; target=0x29 resolution=8x8 frequency=%s Hz", hz)
     i2c = busio.I2C(board.SCL, board.SDA)
     try:
         original_find_file = vl53lxcx._find_file
@@ -72,15 +68,21 @@ def make_sensor(hz):
             sensor = vl53lxcx.VL53L8CX(i2c)
         finally:
             vl53lxcx._find_file = original_find_file
+        LOG.info("Sensor init: probing device")
         if not sensor.is_alive():
             raise OSError("VL53L8CX not responding")
+        LOG.info("Sensor init: loading firmware and configuring ranging")
         sensor.init()
         sensor.resolution = vl53lxcx.RESOLUTION_8X8
         sensor.ranging_freq = hz
         if not sensor.start_ranging({vl53lxcx.DATA_DISTANCE_MM, vl53lxcx.DATA_TARGET_STATUS}):
             raise OSError("Sensor did not start ranging with the requested data")
-    except (OSError, RuntimeError, ValueError):
-        i2c.deinit()
+        LOG.info("Sensor init: ranging started; awaiting frames")
+    except (OSError, RuntimeError, ValueError, IndexError, struct.error):
+        try:
+            i2c.deinit()
+        except (OSError, RuntimeError) as exc:
+            LOG.warning("Could not release I2C after initialization failure: %s", exc)
         raise
     return sensor, i2c
 
@@ -92,7 +94,10 @@ def close_sensor(sensor, i2c):
         except (OSError, RuntimeError, ValueError) as exc:
             LOG.warning("Could not stop sensor: %s", exc)
     if i2c is not None:
-        i2c.deinit()
+        try:
+            i2c.deinit()
+        except (OSError, RuntimeError) as exc:
+            LOG.warning("Could not release I2C: %s", exc)
 
 
 def read_grid(sensor):
@@ -102,6 +107,9 @@ def read_grid(sensor):
         raise ValueError("Sensor frame missing distance or target status data")
     if len(data.distance_mm) != 64 or len(data.target_status) != 64:
         raise ValueError("Sensor frame must contain 64 distances and target statuses")
+    LOG.debug("Sensor frame status_counts=%s positive_distances=%d",
+              dict(sorted(Counter(data.target_status).items())),
+              sum(value > 0 for value in data.distance_mm))
     return [[(data.distance_mm[y * 8 + x],
               data.target_status[y * 8 + x] == STATUS_VALID)
              for x in range(8)] for y in range(8)]
@@ -198,13 +206,11 @@ def run(args):
     from gpiozero import Button
 
     session = WorkoutSession()
-    defaults = Settings(enter_mm=args.detection.enter_mm, exit_mm=args.detection.exit_mm,
-                        min_zones=args.detection.min_zones, min_valid=args.detection.min_valid,
-                        enter_seconds=args.detection.enter_seconds,
-                        exit_seconds=args.detection.exit_seconds,
-                        frame_timeout=args.detection.frame_timeout)
-    settings = load_settings(args.settings_file, defaults)
-    detector = OccupancyDetector(settings.detection())
+    settings = load_settings(args.settings_file, Settings())
+    detector = sensor_config.create_detector()
+    LOG.info("Sensor config: %s rotation=%s dead_zones=%s hz=%s",
+             detector.config, detector.rotation, sorted(detector.dead_zones),
+             sensor_config.RANGING_HZ)
     navigation = Navigation()
     matrix = create_matrix()
     matrix.brightness = settings.brightness
@@ -216,6 +222,11 @@ def run(args):
     menu = None
     retry_at = 0.0
     last_draw = 0.0
+    ready_frames = 0
+    usable_frames = 0
+    last_frame_at = None
+    previous_report = time.monotonic()
+    stage = "idle"
     try:
         for name in ("prev", "next", "ok"):
             buttons[name] = Button(getattr(args, f"{name}_pin"), pull_up=True)
@@ -234,8 +245,6 @@ def run(args):
                         LOG.error("Settings not changed: %s", navigation.error)
                     if settings != previous_settings:
                         matrix.brightness = settings.brightness
-                        if settings.detection() != previous_settings.detection():
-                            detector = OccupancyDetector(settings.detection())
                     if previous_screen == "select" and navigation.screen == "workout":
                         session.confirm(now)
                         if session.tick(now) and settings.sound:
@@ -249,19 +258,36 @@ def run(args):
 
             if sensor is None and now >= retry_at:
                 try:
-                    sensor, i2c = make_sensor(args.hz)
+                    stage = "initialization"
+                    sensor, i2c = make_sensor(sensor_config.RANGING_HZ)
                     connected_at = time.monotonic()
+                    ready_frames = usable_frames = 0
+                    last_frame_at = None
                     LOG.info("Sensor initialized; waiting for valid frames")
-                except (OSError, RuntimeError) as exc:
-                    LOG.error("Sensor connection failed: %s", exc)
+                except (OSError, RuntimeError, ValueError, IndexError, struct.error):
+                    LOG.exception("Sensor connection failed during %s; retrying in 2 seconds", stage)
                     retry_at = time.monotonic() + 2
                 now = time.monotonic()
 
             if sensor is not None:
                 try:
+                    stage = "data-ready check"
                     if sensor.check_data_ready():
+                        stage = "frame read"
+                        ready_frames += 1
+                        grid = read_grid(sensor)
+                        last_frame_at = now
+                        readings = active_readings(orient_grid(grid, detector.rotation),
+                                                   detector.dead_zones)
+                        valid_count = len(readings)
+                        if valid_count >= detector.config.min_valid:
+                            usable_frames += 1
+                        LOG.debug("Sensor frame active_valid=%d/%d near=%d min_valid=%d",
+                                  valid_count, 64 - len(detector.dead_zones),
+                                  sum(value <= detector.config.enter_mm for value in readings),
+                                  detector.config.min_valid)
                         previous_occupancy = detector.occupied
-                        event = detector.update(read_grid(sensor), now)
+                        event = detector.update(grid, now)
                         if settings.sound and (event == "arrived" or
                                                (previous_occupancy is None and detector.occupied is True)):
                             audio.play("wall")
@@ -270,19 +296,32 @@ def run(args):
                             if session.phase in (Phase.BREAK, Phase.COMPLETE):
                                 menu = None
                     if (detector.check_timeout(now)
-                            and now - connected_at >= settings.frame_timeout):
-                        LOG.error("Sensor data unavailable or invalid; reconnecting")
+                            and now - connected_at >= detector.config.frame_timeout):
+                        LOG.error("Sensor timeout: ready_frames=%d usable_frames=%d "
+                                  "last_frame_age=%s last_usable_age=%s timeout=%.2fs; reconnecting",
+                                  ready_frames, usable_frames,
+                                  "never" if last_frame_at is None else f"{now - last_frame_at:.2f}s",
+                                  "never" if detector.last_valid is None else f"{now - detector.last_valid:.2f}s",
+                                  detector.config.frame_timeout)
                         close_sensor(sensor, i2c)
                         sensor = None
                         i2c = None
+                        detector.invalidate()
                         retry_at = now + 2
-                except (OSError, RuntimeError, ValueError, struct.error) as exc:
-                    LOG.error("Sensor read failed: %s; reconnecting", exc)
+                except (OSError, RuntimeError, ValueError, IndexError, struct.error):
+                    LOG.exception("Sensor failure during %s after %.2fs: ready_frames=%d "
+                                  "usable_frames=%d; reconnecting",
+                                  stage, now - connected_at, ready_frames, usable_frames)
                     close_sensor(sensor, i2c)
                     sensor = None
                     i2c = None
                     detector.invalidate()
                     retry_at = now + 2
+                if now - previous_report >= 30:
+                    LOG.info("Sensor status: connected=%s ready_frames=%d usable_frames=%d "
+                             "fault=%s occupied=%s", sensor is not None, ready_frames,
+                             usable_frames, detector.fault, detector.occupied)
+                    previous_report = now
             if session.tick(now):
                 if settings.sound:
                     audio.play("start")
@@ -301,8 +340,12 @@ def run(args):
 
 
 def main():
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     args = parse_args()
+    handlers = [logging.StreamHandler()]
+    if args.log_file:
+        handlers.append(logging.FileHandler(args.log_file))
+    logging.basicConfig(level=getattr(logging, args.log_level),
+                        format="%(asctime)s %(levelname)s %(message)s", handlers=handlers)
     try:
         run(args)
     except KeyboardInterrupt:

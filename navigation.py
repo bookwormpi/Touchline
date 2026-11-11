@@ -2,17 +2,10 @@
 
 from dataclasses import replace
 
-from workout import Phase
-
 HOME_ITEMS = ("WORKOUT", "SETTINGS")
 SETTING_ITEMS = (
     ("BRIGHTNESS", "brightness", 10),
     ("SOUND", "sound", 1),
-    ("ENTER MM", "enter_mm", 50),
-    ("EXIT MM", "exit_mm", 50),
-    ("MIN ZONES", "min_zones", 1),
-    ("ENTER SEC", "enter_seconds", 0.1),
-    ("EXIT SEC", "exit_seconds", 0.1),
     ("BACK", None, 0),
 )
 
