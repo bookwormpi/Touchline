@@ -2,12 +2,16 @@ import sys
 import tempfile
 import types
 import unittest
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+from audio import Audio
 from detection import DetectionConfig, OccupancyDetector
 from interface_ai import create_matrix, render_frame
 from main import ButtonInput, handle_button, make_sensor, read_grid, run
+from navigation import Navigation
+from settings import Settings, load_settings, save_settings
 from workout import Phase, SwimSet, Workout, WorkoutSession
 
 
@@ -114,6 +118,18 @@ class WorkoutTests(unittest.TestCase):
 
 
 class SensorTests(unittest.TestCase):
+    def test_incomplete_sensor_frames_are_rejected(self):
+        sensor = Mock()
+        driver = types.SimpleNamespace(STATUS_VALID=5)
+        with patch.dict(sys.modules, {"vl53lxcx": driver}):
+            for distance, status in ((None, [5] * 64), ([1] * 64, None),
+                                     ([1] * 63, [5] * 64), ([1] * 64, [5] * 63)):
+                sensor.get_ranging_data.return_value = types.SimpleNamespace(
+                    distance_mm=distance, target_status=status)
+                with self.subTest(distance=distance, status=status):
+                    with self.assertRaises(ValueError):
+                        read_grid(sensor)
+
     def test_debounce_hysteresis_invalid_frames_and_recovery(self):
         config = DetectionConfig(min_zones=3, min_valid=8,
                                  enter_seconds=0.3, exit_seconds=0.5, frame_timeout=1)
@@ -188,6 +204,21 @@ class SensorTests(unittest.TestCase):
             with self.assertRaises(OSError):
                 make_sensor(10)
         i2c.deinit.assert_called_once_with()
+
+    def test_rejects_sensor_that_fails_to_start_ranging(self):
+        sensor = Mock()
+        sensor.is_alive.return_value = True
+        sensor.start_ranging.return_value = False
+        i2c = Mock()
+        driver = types.SimpleNamespace(DATA_DISTANCE_MM="distance", DATA_TARGET_STATUS="status",
+                                       RESOLUTION_8X8=64, VL53L8CX=Mock(return_value=sensor),
+                                       _find_file=Mock())
+        with patch.dict(sys.modules, {"board": types.SimpleNamespace(SCL=1, SDA=2),
+                                      "busio": types.SimpleNamespace(I2C=Mock(return_value=i2c)),
+                                      "vl53lxcx": driver}):
+            with self.assertRaisesRegex(OSError, "did not start ranging"):
+                make_sensor(10)
+        i2c.deinit.assert_called_once()
 
     def test_sensor_firmware_lookup_in_dotted_python_path(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -284,10 +315,12 @@ class InterfaceTests(unittest.TestCase):
         buttons = [Mock(is_pressed=False) for _ in range(3)]
         gpio = types.SimpleNamespace(Button=Mock(side_effect=buttons))
         args = types.SimpleNamespace(
-            detection=DetectionConfig(), audio_command=None,
+            detection=DetectionConfig(), settings_file="/nonexistent/touchline/settings.json",
+            sounds_dir="/nonexistent/touchline/sounds",
             prev_pin=17, next_pin=18, ok_pin=27, hz=10)
         with patch.dict(sys.modules, {"gpiozero": gpio}), \
                 patch("main.create_matrix", return_value=matrix), \
+                patch("main.Audio") as audio, \
                 patch("main.make_sensor", return_value=(sensor, i2c)), \
                 patch("main.time.monotonic", return_value=100), \
                 patch("main.time.sleep", side_effect=KeyboardInterrupt):
@@ -298,8 +331,187 @@ class InterfaceTests(unittest.TestCase):
         matrix.Clear.assert_called_once()
         sensor.stop_ranging.assert_called_once()
         i2c.deinit.assert_called_once()
+        audio.return_value.close.assert_called_once()
         for button in buttons:
             button.close.assert_called_once()
+
+    def test_main_loop_plays_start_initial_wall_and_arrival_cues(self):
+        matrix = Mock()
+        sensor = Mock()
+        sensor.check_data_ready.return_value = True
+        i2c = Mock()
+        clock = [100.0]
+        near = [[(500, True)] * 8 for _ in range(8)]
+        far = [[(1500, True)] * 8 for _ in range(8)]
+        def grid(_sensor):
+            elapsed = clock[0] - 100
+            return near if elapsed < 1 or elapsed >= 2 else far
+        def sleep(_duration):
+            clock[0] += 0.2
+            if clock[0] > 103:
+                raise KeyboardInterrupt
+        inputs = Mock()
+        inputs.poll.side_effect = [["ok"], ["ok"]] + [[]] * 30
+        args = types.SimpleNamespace(
+            detection=DetectionConfig(enter_seconds=0.3, exit_seconds=0.5),
+            settings_file="/nonexistent/touchline/settings.json",
+            sounds_dir="/nonexistent/touchline/sounds",
+            prev_pin=18, next_pin=19, ok_pin=25, hz=10)
+        gpio = types.SimpleNamespace(Button=Mock(return_value=Mock(is_pressed=False)))
+        with patch.dict(sys.modules, {"gpiozero": gpio}), \
+                patch("main.create_matrix", return_value=matrix), \
+                patch("main.Audio") as audio, \
+                patch("main.ButtonInput", return_value=inputs), \
+                patch("main.make_sensor", return_value=(sensor, i2c)), \
+                patch("main.read_grid", side_effect=grid), \
+                patch("main.time.monotonic", side_effect=lambda: clock[0]), \
+                patch("main.time.sleep", side_effect=sleep):
+            with self.assertRaises(KeyboardInterrupt):
+                run(args)
+        self.assertEqual([call.args[0] for call in audio.return_value.play.call_args_list],
+                         ["start", "wall", "wall"])
+
+    def test_main_loop_reconnects_after_incomplete_frame(self):
+        matrix = Mock()
+        broken, recovered = Mock(), Mock()
+        broken.check_data_ready.return_value = True
+        broken.get_ranging_data.return_value = types.SimpleNamespace(
+            distance_mm=None, target_status=None)
+        recovered.check_data_ready.return_value = False
+        i2c1, i2c2 = Mock(), Mock()
+        clock = [100.0]
+        def sleep(_duration):
+            clock[0] += 1
+            if clock[0] > 103:
+                raise KeyboardInterrupt
+        args = types.SimpleNamespace(
+            detection=DetectionConfig(frame_timeout=10),
+            settings_file="/nonexistent/touchline/settings.json",
+            sounds_dir="/nonexistent/touchline/sounds",
+            prev_pin=18, next_pin=19, ok_pin=25, hz=10)
+        gpio = types.SimpleNamespace(Button=Mock(return_value=Mock(is_pressed=False)))
+        driver = types.SimpleNamespace(STATUS_VALID=5)
+        with patch.dict(sys.modules, {"gpiozero": gpio, "vl53lxcx": driver}), \
+                patch("main.create_matrix", return_value=matrix), \
+                patch("main.Audio"), \
+                patch("main.make_sensor", side_effect=[(broken, i2c1), (recovered, i2c2)]) as make, \
+                patch("main.time.monotonic", side_effect=lambda: clock[0]), \
+                patch("main.time.sleep", side_effect=sleep), \
+                self.assertLogs("touchline", level="ERROR") as logged:
+            with self.assertRaises(KeyboardInterrupt):
+                run(args)
+        self.assertEqual(make.call_count, 2)
+        self.assertTrue(any("missing distance" in message for message in logged.output))
+        i2c1.deinit.assert_called_once()
+        i2c2.deinit.assert_called_once()
+
+
+class SettingsAndNavigationTests(unittest.TestCase):
+    def test_settings_round_trip_and_invalid_file(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "config" / "settings.json"
+            original = Settings(brightness=70, sound=False, enter_mm=900)
+            self.assertEqual(load_settings(path, original), original)
+            save_settings(path, original)
+            self.assertEqual(load_settings(path, Settings()), original)
+            path.write_text('{"brightness": 101}', encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "Cannot load settings"):
+                load_settings(path, Settings())
+            path.write_text('{"enter_seconds": NaN}', encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "finite"):
+                load_settings(path, Settings())
+
+    def test_navigation_persists_edits_validates_and_returns_home(self):
+        navigation = Navigation()
+        session = session_for(SwimSet("FR", 50, 1, 60))
+        settings = Settings()
+        saved = []
+        settings = navigation.button("next", session, settings, saved.append)
+        settings = navigation.button("ok", session, settings, saved.append)
+        self.assertEqual(navigation.screen, "settings")
+        settings = navigation.button("ok", session, settings, saved.append)
+        settings = navigation.button("prev", session, settings, saved.append)
+        self.assertEqual(settings.brightness, 90)
+        self.assertEqual(saved, [settings])
+        settings = navigation.button("ok", session, settings, saved.append)
+        settings = navigation.button("next", session, settings, saved.append)
+        settings = navigation.button("ok", session, settings, saved.append)
+        settings = navigation.button("next", session, settings, saved.append)
+        self.assertFalse(settings.sound)
+        def fail_save(value):
+            raise OSError("read-only storage")
+        old = settings
+        settings = navigation.button("next", session, settings, fail_save)
+        self.assertEqual(settings, old)
+        self.assertIn("read-only", navigation.error)
+        navigation.button("hold", session, settings, saved.append)
+        self.assertEqual((navigation.screen, session.phase), ("standby", Phase.STANDBY))
+        navigation.button("ok", session, settings, saved.append)
+        self.assertEqual((navigation.screen, session.phase), ("home", Phase.SELECT))
+
+    def test_home_workout_selection_back_and_render(self):
+        navigation = Navigation()
+        session = session_for(SwimSet("FR", 50, 1, 60))
+        detector = OccupancyDetector(DetectionConfig())
+        settings = Settings()
+        save = Mock()
+        self.assertEqual(render_frame(session, detector, 1, navigation=navigation,
+                                      settings=settings).size, (128, 64))
+        navigation.button("ok", session, settings, save)
+        self.assertEqual(navigation.screen, "select")
+        navigation.button("next", session, settings, save)
+        self.assertEqual(navigation.select_index, 1)
+        self.assertEqual(render_frame(session, detector, 1, navigation=navigation,
+                                      settings=settings).size, (128, 64))
+        navigation.button("ok", session, settings, save)
+        self.assertEqual(navigation.screen, "home")
+        navigation.button("next", session, settings, save)
+        navigation.button("ok", session, settings, save)
+        for index in range(8):
+            navigation.settings_index = index
+            for editing in (False, True):
+                navigation.editing = editing
+                self.assertEqual(render_frame(session, detector, 1, navigation=navigation,
+                                              settings=settings).size, (128, 64))
+
+    def test_workout_view_unchanged_with_navigation(self):
+        navigation = Navigation()
+        navigation.screen = "workout"
+        session = session_for(SwimSet("FR", 50, 1, 60))
+        session.confirm(0)
+        detector = OccupancyDetector(DetectionConfig())
+        clock = datetime(2026, 1, 2, 12, 34)
+        old_view = render_frame(session, detector, 1, clock=clock)
+        new_view = render_frame(session, detector, 1, clock=clock,
+                                navigation=navigation, settings=Settings())
+        self.assertEqual(old_view.tobytes(), new_view.tobytes())
+
+    def test_audio_plays_named_mp3_and_reports_missing(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "start.mp3"
+            path.write_bytes(b"mp3")
+            instance = Mock()
+            player = instance.media_player_new.return_value
+            player.event_manager.return_value.event_attach.return_value = 0
+            vlc = types.SimpleNamespace(Instance=Mock(return_value=instance),
+                                        EventType=types.SimpleNamespace(MediaPlayerEncounteredError=1))
+            with patch.dict(sys.modules, {"vlc": vlc}):
+                audio = Audio(temp)
+                audio.play("start")
+                instance.media_new.assert_called_once_with(str(path.resolve()))
+                player.play.assert_called_once()
+                instance.media_new.return_value.release.assert_called_once()
+                callback = player.event_manager.return_value.event_attach.call_args.args[1]
+                with self.assertLogs("touchline", level="ERROR") as error:
+                    callback(None, "start")
+                self.assertIn("Audio playback failed", error.output[0])
+                with self.assertLogs("touchline", level="ERROR") as logged:
+                    audio.play("wall")
+                    audio.play("wall")
+                self.assertEqual(len(logged.output), 1)
+                audio.close()
+                player.release.assert_called_once()
+                instance.release.assert_called_once()
 
 
 if __name__ == "__main__":

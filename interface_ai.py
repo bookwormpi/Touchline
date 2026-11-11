@@ -4,6 +4,7 @@
 from datetime import datetime
 
 from PIL import Image, ImageDraw
+from navigation import HOME_ITEMS, SETTING_ITEMS
 from workout import Phase
 
 # Display colors (RGB)
@@ -172,7 +173,8 @@ def draw_workout_view(draw, session, detector, now, clock):
         draw_bitmap_text(draw, (time_x, y + 9), result, white)
 
 
-def render_frame(session, detector, now, menu_index=None, clock=None):
+def render_frame(session, detector, now, menu_index=None, clock=None, *,
+                 navigation=None, settings=None):
     """Render live workout state and sensor health to the 128x64 panel."""
     image = Image.new("RGB", (128, 64), COLORS["background"])
     draw = ImageDraw.Draw(image)
@@ -182,6 +184,36 @@ def render_frame(session, detector, now, menu_index=None, clock=None):
     def text(x, y, value, color=white, scale=1):
         draw_bitmap_text(draw, (x, y), value, color, scale=scale)
 
+    if navigation is not None and navigation.screen == "home":
+        text(4, 3, "TOUCHLINE", green, 2)
+        text(4, 19, "SWIM TRAINER", muted)
+        draw.line((4, 28, 123, 28), fill=COLORS["divider"])
+        for i, item in enumerate(HOME_ITEMS):
+            text(8, 33 + i * 10, ("- " if i == navigation.home_index else "  ") + item,
+                 green if i == navigation.home_index else white)
+        text(4, 57, "SENSOR ERROR" if detector.fault else "ARROWS MOVE  OK SELECT",
+             red if detector.fault else muted)
+        return image
+    if navigation is not None and navigation.screen == "settings":
+        text(4, 3, "SETTINGS", green)
+        text(79, 3, "EDIT" if navigation.editing else "SELECT", muted)
+        draw.line((4, 12, 123, 12), fill=COLORS["divider"])
+        first = max(0, min(navigation.settings_index - 1, len(SETTING_ITEMS) - 3))
+        for row, index in enumerate(range(first, first + 3)):
+            label, field, _ = SETTING_ITEMS[index]
+            value = getattr(settings, field) if field else ""
+            if field == "sound":
+                value = "ON" if value else "OFF"
+            elif field in ("enter_seconds", "exit_seconds"):
+                value = f"{value:.1f}"
+            selected = index == navigation.settings_index
+            text(4, 18 + row * 11, ("- " if selected else "  ") + label,
+                 green if selected else white)
+            text(96, 18 + row * 11, str(value), white)
+        text(4, 57, "INVALID OR SAVE ERROR" if navigation.error else
+             ("ARROWS CHANGE  OK DONE" if navigation.editing else "ARROWS MOVE  OK SELECT"),
+             red if navigation.error else muted)
+        return image
     if session.phase == Phase.STANDBY:
         text(32, 25, "STANDBY", muted, 2)
         text(24, 50, "OK TO WAKE", muted)
@@ -204,8 +236,10 @@ def render_frame(session, detector, now, menu_index=None, clock=None):
     if session.phase == Phase.SELECT:
         text(4, 3, "TOUCHLINE", green)
         text(4, 17, "SELECT WORKOUT", muted)
-        text(4, 29, session.workout.name, white, 2)
-        text(4, 49, "SENSOR ERROR" if detector.fault else f"{len(session.workout.sets)} SETS",
+        is_back = navigation is not None and navigation.select_index == len(session.workouts)
+        text(4, 29, "BACK" if is_back else session.workout.name, white, 2)
+        text(4, 49, "SENSOR ERROR" if detector.fault else
+             ("RETURN HOME" if is_back else f"{len(session.workout.sets)} SETS"),
              red if detector.fault else muted)
         text(4, 57, "ARROWS MOVE  OK START", muted)
         return image

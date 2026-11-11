@@ -31,6 +31,12 @@ class OccupancyDetector:
         self.last_valid = None
         self.fault = True
 
+    def invalidate(self):
+        self.last_valid = None
+        self.fault = True
+        self.occupied = None
+        self._reset_candidate()
+
     def _reset_candidate(self):
         self.candidate = self.candidate_since = None
 

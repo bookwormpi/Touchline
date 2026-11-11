@@ -27,8 +27,10 @@ water; follow local electrical and pool-safety rules.
   trip, `LAST REP` and `--:--` indicate that no further send-off is scheduled.
   A set may instead specify a rest period for a late arrival. The next
   send-off is based on the **actual** detected departure, not the previous
-  planned time. Optional audio plays once at each scheduled send-off, including
-  the assumed far-end departure.
+  planned time. When sound is enabled, the start MP3 plays at each scheduled
+  send-off, including the assumed far-end departure. The wall MP3 plays on a
+  debounced arrival and when wall presence is initially established, including
+  after a sensor reconnection.
 - Pauses between sets until OK is pressed. A menu permits extra rest, manually
   completing a set, or ending a workout; completion and exit require
   confirmation. A manual completion does not invent any missing splits.
@@ -80,10 +82,23 @@ choosing pins.
 
 | Button | Action |
 | --- | --- |
-| PREV / NEXT | Choose workout, or open and navigate the workout menu |
-| OK | Confirm selection, start a workout, or advance after a set |
+| PREV / NEXT | Navigate home, settings or workouts; open the workout menu during a workout |
+| OK | Confirm selection, edit a setting, start a workout, or advance after a set |
 | Hold OK for 1.5 seconds | Enter standby, abandoning the current workout |
-| OK in standby | Wake to workout selection |
+| OK in standby | Wake to the home screen |
+
+The start screen offers `WORKOUT` and `SETTINGS`. Choose a workout with the
+arrows and OK, or choose `BACK` to return home. In settings, use the arrows to
+choose an item and OK to edit it; arrows change the value and OK finishes
+editing. Select `BACK` to return home. Brightness, sound, entry and exit
+distances, minimum occupied zones, and both debounce times are saved immediately.
+Values that violate sensor constraints are rejected, and save errors appear on
+screen and in the log. Settings are stored in `/var/lib/touchline/settings.json`
+by default; use `--settings-file` to choose another writable path. Saved settings
+override corresponding sensor command-line defaults. Deleting that file resets
+settings on the next launch. Entry and exit distances must satisfy
+`0 < entry < exit <= 4000` mm; debounce values range from 0.1 to 5 seconds.
+The minimum occupied zones cannot exceed `--min-valid` (default 8).
 
 `EXTRA REST` moves the due time to the later of now or the existing send-off,
 then adds the current set's configured extra-rest duration. It works while
@@ -138,11 +153,25 @@ Hold OK deliberately: standby resets the current workout and its history.
    The application keeps privileges for I2C access. Check the terminal or
    service logs for sensor and audio errors. Stop with Ctrl+C.
 
-Audio is disabled by default. To enable it with an installed ALSA player, add
-`--audio-command 'aplay -q'`. The configured command must accept WAV data on
-standard input; it is executed without a shell. Audio failures are logged and
-do not stop the timer. Verify the selected ALSA output works for the user
-running the application.
+Install VLC's native library with `sudo apt install libvlc5 vlc-plugin-base`
+and place your own MP3 files at `sounds/start.mp3` and `sounds/wall.mp3` in
+the application directory. These files are not included. `--sounds-dir` selects
+another directory. Sound is enabled by default and can be disabled in settings.
+Audio errors and missing files are logged; they do not stop the timer. Configure
+and test the Pi's audio output for the account running the application, including
+when using sudo.
+
+### Sensor connection troubleshooting
+
+`Sensor initialized` means only that startup succeeded; readings must still be
+received and validated. Incomplete frames and I/O errors are logged, the sensor
+state is cleared, and reconnection is attempted. Repeated `Errno 5` errors can
+have physical causes that software cannot determine: with power off, check
+sensor power, ground, SDA/SCL wiring and connectors, compatible logic levels,
+and appropriate I2C pull-ups for the sensor breakout. Enable I2C and verify the
+device is visible before running the calibration diagnostic. Check the Pi's I2C
+configuration and sensor documentation; avoid changing the bus speed blindly.
+Do not treat reconnection as proof that the hardware is stable.
 
 ## Poolside calibration
 

@@ -2,19 +2,16 @@
 """Touchline application: display, buttons, VL53L8CX and workout controller."""
 
 import argparse
-import io
 import logging
-import math
 from pathlib import Path
-import shlex
 import struct
-import subprocess
-import threading
 import time
-import wave
 
+from audio import Audio
 from detection import DetectionConfig, OccupancyDetector
 from interface_ai import MENU_ITEMS, create_matrix, render_frame
+from navigation import Navigation
+from settings import Settings, load_settings, save_settings
 from workout import Phase, WorkoutSession
 
 LOG = logging.getLogger("touchline")
@@ -33,8 +30,8 @@ def parse_args():
     parser.add_argument("--exit-debounce", type=float, default=0.5)
     parser.add_argument("--sensor-timeout", type=float, default=1.0)
     parser.add_argument("--hz", type=int, default=10, choices=range(1, 16))
-    parser.add_argument("--audio-command", default=None,
-                        help="optional player command reading WAV from stdin, e.g. 'aplay -q'")
+    parser.add_argument("--settings-file", default="/var/lib/touchline/settings.json")
+    parser.add_argument("--sounds-dir", default=str(Path(__file__).resolve().parent / "sounds"))
     args = parser.parse_args()
     pins = (args.prev_pin, args.next_pin, args.ok_pin)
     if len(set(pins)) != 3 or any(pin < 0 or pin > 27 or pin in (2, 3) for pin in pins):
@@ -46,13 +43,6 @@ def parse_args():
         )
     except ValueError as exc:
         parser.error(str(exc))
-    if args.audio_command is not None:
-        try:
-            args.audio_command = shlex.split(args.audio_command)
-        except ValueError as exc:
-            parser.error(f"Invalid audio command: {exc}")
-        if not args.audio_command:
-            parser.error("Audio command must not be empty")
     return args
 
 
@@ -87,7 +77,8 @@ def make_sensor(hz):
         sensor.init()
         sensor.resolution = vl53lxcx.RESOLUTION_8X8
         sensor.ranging_freq = hz
-        sensor.start_ranging({vl53lxcx.DATA_DISTANCE_MM, vl53lxcx.DATA_TARGET_STATUS})
+        if not sensor.start_ranging({vl53lxcx.DATA_DISTANCE_MM, vl53lxcx.DATA_TARGET_STATUS}):
+            raise OSError("Sensor did not start ranging with the requested data")
     except (OSError, RuntimeError, ValueError):
         i2c.deinit()
         raise
@@ -98,7 +89,7 @@ def close_sensor(sensor, i2c):
     if sensor is not None:
         try:
             sensor.stop_ranging()
-        except (OSError, RuntimeError) as exc:
+        except (OSError, RuntimeError, ValueError) as exc:
             LOG.warning("Could not stop sensor: %s", exc)
     if i2c is not None:
         i2c.deinit()
@@ -107,6 +98,10 @@ def close_sensor(sensor, i2c):
 def read_grid(sensor):
     from vl53lxcx import STATUS_VALID
     data = sensor.get_ranging_data()
+    if data is None or data.distance_mm is None or data.target_status is None:
+        raise ValueError("Sensor frame missing distance or target status data")
+    if len(data.distance_mm) != 64 or len(data.target_status) != 64:
+        raise ValueError("Sensor frame must contain 64 distances and target statuses")
     return [[(data.distance_mm[y * 8 + x],
               data.target_status[y * 8 + x] == STATUS_VALID)
              for x in range(8)] for y in range(8)]
@@ -150,37 +145,6 @@ class ButtonInput:
                 self.held = True
                 events.append("hold")
         return events
-
-
-class Audio:
-    def __init__(self, command):
-        self.command = command
-        self.thread = None
-        buf = io.BytesIO()
-        with wave.open(buf, "wb") as wav:
-            wav.setnchannels(1)
-            wav.setsampwidth(2)
-            wav.setframerate(16000)
-            samples = (int(9000 * math.sin(2 * math.pi * 880 * i / 16000))
-                       for i in range(2400))
-            wav.writeframes(b"".join(struct.pack("<h", sample) for sample in samples))
-        self.tone = buf.getvalue()
-
-    def play(self):
-        if self.command is None or (self.thread and self.thread.is_alive()):
-            return
-        self.thread = threading.Thread(target=self._play, daemon=True)
-        self.thread.start()
-
-    def _play(self):
-        try:
-            result = subprocess.run(self.command, input=self.tone, stdout=subprocess.DEVNULL,
-                                    stderr=subprocess.PIPE, timeout=5, check=False)
-            if result.returncode:
-                LOG.error("Audio player exited %s: %s", result.returncode,
-                          result.stderr.decode(errors="replace").strip())
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            LOG.error("Audio cue failed: %s", exc)
 
 
 def handle_button(event, session, now, menu):
@@ -234,9 +198,17 @@ def run(args):
     from gpiozero import Button
 
     session = WorkoutSession()
-    detector = OccupancyDetector(args.detection)
-    audio = Audio(args.audio_command)
+    defaults = Settings(enter_mm=args.detection.enter_mm, exit_mm=args.detection.exit_mm,
+                        min_zones=args.detection.min_zones, min_valid=args.detection.min_valid,
+                        enter_seconds=args.detection.enter_seconds,
+                        exit_seconds=args.detection.exit_seconds,
+                        frame_timeout=args.detection.frame_timeout)
+    settings = load_settings(args.settings_file, defaults)
+    detector = OccupancyDetector(settings.detection())
+    navigation = Navigation()
     matrix = create_matrix()
+    matrix.brightness = settings.brightness
+    audio = Audio(args.sounds_dir)
     buttons = {}
     sensor = None
     i2c = None
@@ -252,13 +224,34 @@ def run(args):
         while True:
             now = time.monotonic()
             for event in inputs.poll(now):
-                menu = handle_button(event, session, now, menu)
+                if navigation.screen != "workout" or event == "hold":
+                    previous_screen = navigation.screen
+                    previous_settings = settings
+                    settings = navigation.button(
+                        event, session, settings,
+                        lambda value: save_settings(args.settings_file, value))
+                    if navigation.error:
+                        LOG.error("Settings not changed: %s", navigation.error)
+                    if settings != previous_settings:
+                        matrix.brightness = settings.brightness
+                        if settings.detection() != previous_settings.detection():
+                            detector = OccupancyDetector(settings.detection())
+                    if previous_screen == "select" and navigation.screen == "workout":
+                        session.confirm(now)
+                        if session.tick(now) and settings.sound:
+                            audio.play("start")
+                    if event == "hold":
+                        menu = None
+                else:
+                    menu = handle_button(event, session, now, menu)
+                    if session.phase == Phase.SELECT:
+                        navigation.screen = "home"
 
             if sensor is None and now >= retry_at:
                 try:
                     sensor, i2c = make_sensor(args.hz)
                     connected_at = time.monotonic()
-                    LOG.info("Sensor connected")
+                    LOG.info("Sensor initialized; waiting for valid frames")
                 except (OSError, RuntimeError) as exc:
                     LOG.error("Sensor connection failed: %s", exc)
                     retry_at = time.monotonic() + 2
@@ -267,30 +260,35 @@ def run(args):
             if sensor is not None:
                 try:
                     if sensor.check_data_ready():
+                        previous_occupancy = detector.occupied
                         event = detector.update(read_grid(sensor), now)
+                        if settings.sound and (event == "arrived" or
+                                               (previous_occupancy is None and detector.occupied is True)):
+                            audio.play("wall")
                         if event:
                             session.sensor_event(event, now)
                             if session.phase in (Phase.BREAK, Phase.COMPLETE):
                                 menu = None
                     if (detector.check_timeout(now)
-                            and now - connected_at >= args.detection.frame_timeout):
+                            and now - connected_at >= settings.frame_timeout):
                         LOG.error("Sensor data unavailable or invalid; reconnecting")
                         close_sensor(sensor, i2c)
                         sensor = None
                         i2c = None
                         retry_at = now + 2
-                except (OSError, RuntimeError) as exc:
-                    LOG.error("Sensor I/O error: %s", exc)
+                except (OSError, RuntimeError, ValueError, struct.error) as exc:
+                    LOG.error("Sensor read failed: %s; reconnecting", exc)
                     close_sensor(sensor, i2c)
                     sensor = None
                     i2c = None
-                    detector.last_valid = None
-                    detector.check_timeout(now)
+                    detector.invalidate()
                     retry_at = now + 2
             if session.tick(now):
-                audio.play()
+                if settings.sound:
+                    audio.play("start")
             if now - last_draw >= 0.1:
-                canvas.SetImage(render_frame(session, detector, now, menu))
+                canvas.SetImage(render_frame(session, detector, now, menu,
+                                             navigation=navigation, settings=settings))
                 canvas = matrix.SwapOnVSync(canvas)
                 last_draw = now
             time.sleep(0.02)
@@ -298,6 +296,7 @@ def run(args):
         close_sensor(sensor, i2c)
         for button in buttons.values():
             button.close()
+        audio.close()
         matrix.Clear()
 
 

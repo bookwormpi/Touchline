@@ -2,3 +2,4 @@ Pillow>=10
 gpiozero>=2
 circuitpython-vl53lxcx==0.0.5
 adafruit-blinka
+python-vlc
