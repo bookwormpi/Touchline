@@ -92,26 +92,34 @@ Hold OK deliberately: standby resets the current workout and its history.
 
 ## Installation and running
 
-1. Enable I2C on the Pi and install/configure the
-   [rpi-rgb-led-matrix Python bindings](https://github.com/hzeller/rpi-rgb-led-matrix)
-   for the bonnet and panel. The library is installed separately and is not
-   included or updated by this repository. The program uses the `adafruit-hat` mapping,
-   64 rows, 128 columns, slowdown 5 and brightness 100; adjust
-   `create_matrix()` in `interface_ai.py` to match your hardware.
+1. Enable I2C on the Pi. On Raspberry Pi OS with Python 3.11 or newer, run
+   the matrix installer as your normal user (it requests sudo for packages):
+
+   ```sh
+   bash install-matrix.sh
+   ```
+
+   It installs build prerequisites with `apt` and installs the Python bindings
+   from a pinned revision of [rpi-rgb-led-matrix](https://github.com/hzeller/rpi-rgb-led-matrix)
+   in `.venv`. It needs internet access and does not modify any existing
+   `rpi-rgb-led-matrix` checkout.
+   The application uses the `adafruit-hat` mapping, 64 rows, 128 columns,
+   slowdown 5 and brightness 100; adjust `create_matrix()` in `interface_ai.py`
+   to match your hardware.
 2. Install the [CircuitPython VL53LxCX driver](https://pypi.org/project/circuitpython-vl53lxcx/)
    and Adafruit Blinka into the same Python environment, for example
-   `python -m pip install circuitpython-vl53lxcx adafruit-blinka`.
+   `.venv/bin/python -m pip install circuitpython-vl53lxcx adafruit-blinka`.
    The application initializes the sensor without toggling its optional LPN
    reset pin, which is not configured by this project.
 3. Install the remaining Python packages with
-   `python -m pip install -r requirements.txt` in that environment. Depending
+   `.venv/bin/python -m pip install -r requirements.txt` in that environment. Depending
    on the Pi and gpiozero version, a supported gpiozero pin backend must also
    be installed/configured.
 4. Connect and verify the three buttons and the I2C sensor. Run with the BCM
    numbers you verified (replace the placeholders):
 
    ```sh
-   sudo /path/to/python main.py --prev-pin PREV_BCM --next-pin NEXT_BCM --ok-pin OK_BCM
+   sudo .venv/bin/python main.py --prev-pin PREV_BCM --next-pin NEXT_BCM --ok-pin OK_BCM
    ```
 
    The matrix driver often requires elevated privileges. Run from this
@@ -128,7 +136,7 @@ running the application.
 ## Poolside calibration
 
 Use the existing diagnostic, for example
-`sudo /path/to/python tofmatrix.py --sensor-only`, to inspect the 8x8 valid
+`sudo .venv/bin/python tofmatrix.py --sensor-only`, to inspect the 8x8 valid
 distance readings in millimeters for the empty approach area and for a swimmer
 at the wall. A dash indicates an invalid or non-positive reading.
 The diagnostic is a separate tool and does not run the workout.
@@ -165,7 +173,7 @@ one.
 Run the hardware-independent tests with:
 
 ```sh
-python -m unittest discover -s tests -v
+.venv/bin/python -m unittest discover -s tests -v
 ```
 
 Tests simulate sensor data and buttons; they do not validate physical detection,
