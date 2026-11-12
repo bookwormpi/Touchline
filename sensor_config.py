@@ -7,7 +7,7 @@ OK_PIN = 25
 
 # Rotation is clockwise; dead-zone coordinates are (row, column) after rotation,
 # zero-based from the top left of the grid printed by the calibration tool.
-ROTATION_DEGREES = 270  # 0, 90, 180 or 270
+ROTATION_DEGREES = 90  # 0, 90, 180 or 270
 DEAD_ZONES = frozenset({
     # (0, 0),
 })
