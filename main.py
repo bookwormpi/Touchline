@@ -145,9 +145,9 @@ def log_bad_frame(grid, detector, context):
     statuses = getattr(grid, "statuses", None)
     if statuses is not None:
         statuses = orient_grid(statuses, detector.rotation)
-    LOG.warning("Bad sensor frame (%s): active_valid=%d rotation=%d "
-                "dead_zones=%s distance_mm=%s valid=%s target_status=%s",
-                context, count, detector.rotation,
+    LOG.warning("Sensor frame with no valid active zones (%s): active_valid=%d rotation=%d "
+                "assumed_distance_mm=%d dead_zones=%s distance_mm=%s valid=%s target_status=%s",
+                context, count, detector.rotation, detector.config.max_distance_mm,
                 sorted(detector.dead_zones),
                 [[distance for distance, _ in row] for row in oriented],
                 [[valid for _, valid in row] for row in oriented], statuses)
@@ -301,7 +301,7 @@ def run(args):
                     connected_at = time.monotonic()
                     ready_frames = usable_frames = 0
                     last_frame_at = None
-                    LOG.info("Sensor initialized; waiting for valid frames")
+                    LOG.info("Sensor initialized; waiting for frames")
                 except (OSError, RuntimeError, ValueError, IndexError, struct.error):
                     LOG.exception("Sensor connection failed during %s; retrying in 2 seconds", stage)
                     retry_at = time.monotonic() + 2
@@ -318,9 +318,8 @@ def run(args):
                         readings = active_readings(orient_grid(grid, detector.rotation),
                                                    detector.dead_zones)
                         valid_count = len(readings)
-                        if valid_count:
-                            usable_frames += 1
-                        else:
+                        usable_frames += 1
+                        if not valid_count:
                             log_bad_frame(grid, detector, f"workout frame {ready_frames}")
                         LOG.debug("Sensor frame active_valid=%d/%d near=%d",
                                   valid_count, 64 - len(detector.dead_zones),
@@ -337,10 +336,9 @@ def run(args):
                     if (detector.check_timeout(now)
                             and now - connected_at >= detector.config.frame_timeout):
                         LOG.error("Sensor timeout: ready_frames=%d usable_frames=%d "
-                                  "last_frame_age=%s last_usable_age=%s timeout=%.2fs; reconnecting",
+                                  "last_frame_age=%s timeout=%.2fs; reconnecting",
                                   ready_frames, usable_frames,
                                   "never" if last_frame_at is None else f"{now - last_frame_at:.2f}s",
-                                  "never" if detector.last_valid is None else f"{now - detector.last_valid:.2f}s",
                                   detector.config.frame_timeout)
                         close_sensor(sensor, i2c)
                         sensor = None

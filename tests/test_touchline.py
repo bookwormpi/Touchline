@@ -170,14 +170,32 @@ class SensorTests(unittest.TestCase):
         detector.update(mostly_invalid, 0.3)
         self.assertEqual(detector.update(mostly_invalid, 0.5), "left")
         self.assertFalse(detector.fault)
-        self.assertEqual(detector.last_valid, 0.5)
+        self.assertEqual(detector.last_frame, 0.5)
 
         all_invalid = [[(0, False)] * 8 for _ in range(8)]
         detector.update(all_invalid, 0.6)
-        self.assertEqual(detector.last_valid, 0.5)
-        self.assertFalse(detector.check_timeout(1.5))
-        self.assertTrue(detector.check_timeout(1.51))
+        self.assertEqual(detector.last_frame, 0.6)
+        self.assertFalse(detector.check_timeout(1.6))
+        self.assertTrue(detector.check_timeout(1.61))
         self.assertIsNone(detector.occupied)
+
+    def test_all_invalid_frames_can_debounce_a_departure(self):
+        config = DetectionConfig(enter_seconds=0.1, exit_seconds=0.5, frame_timeout=1)
+        detector = OccupancyDetector(config)
+        near = [[(500, True)] * 8 for _ in range(8)]
+        invalid = [[(0, False)] * 8 for _ in range(8)]
+        detector.update(near, 0)
+        detector.update(near, 0.2)
+        self.assertTrue(detector.occupied)
+        self.assertIsNone(detector.update(invalid, 0.3))
+        self.assertEqual(detector.update(invalid, 0.8), "left")
+        self.assertFalse(detector.occupied)
+        self.assertFalse(detector.fault)
+        for now in range(1, 8):
+            detector.update(invalid, now)
+        self.assertFalse(detector.fault)
+        self.assertFalse(detector.check_timeout(8))
+        self.assertTrue(detector.check_timeout(8.1))
 
     def test_assumed_distance_must_exceed_exit_threshold(self):
         with self.assertRaisesRegex(ValueError, "exit < max distance"):

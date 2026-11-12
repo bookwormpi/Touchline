@@ -16,7 +16,7 @@ def frame(value):
 
 
 class RotationAndMaskTests(unittest.TestCase):
-    def test_configured_frame_timeout_waits_five_seconds_after_usable_frame(self):
+    def test_configured_frame_timeout_waits_five_seconds_after_received_frame(self):
         detector = create_detector()
         self.assertEqual(detector.config.frame_timeout, 5.0)
         detector.update(frame(1500), 0)
@@ -24,7 +24,9 @@ class RotationAndMaskTests(unittest.TestCase):
         detector.update(invalid, 4.99)
         self.assertFalse(detector.check_timeout(5.0))
         detector.update(invalid, 5.01)
-        self.assertTrue(detector.fault)
+        self.assertFalse(detector.fault)
+        self.assertFalse(detector.check_timeout(10.0))
+        self.assertTrue(detector.check_timeout(10.02))
 
     def test_button_pins_from_configuration(self):
         with patch("sys.argv", ["main.py"]):
@@ -86,7 +88,7 @@ class RotationAndMaskTests(unittest.TestCase):
         lines = output.getvalue().splitlines()
         self.assertEqual(lines[1].split()[:5], ["0", "X", "6000*", "6000*", "6000"])
         self.assertIn("*=assumed distance", output.getvalue())
-        self.assertIn("no valid active zones", output.getvalue())
+        self.assertIn("All-invalid frames are assumed clear", output.getvalue())
         self.assertEqual(grid[6][0], (200, False))
 
     def test_live_grid_shows_assumed_distance_for_invalid_readings(self):
@@ -276,12 +278,81 @@ class GuidedCalibrationTests(unittest.TestCase):
         make.assert_called_once()
         i2c.deinit.assert_called_once()
 
-    def test_application_reports_invalid_frames_separately_from_io_error(self):
+    def test_application_uses_all_invalid_frames_without_reconnecting(self):
+        sensor, i2c = Mock(), Mock()
+        sensor.check_data_ready.return_value = True
+        invalid = [[(0, False)] * 8 for _ in range(8)]
+        detector = create_detector()
+        clock = [100.0]
+
+        def sleep(_duration):
+            clock[0] += 1
+            if clock[0] > 107:
+                raise KeyboardInterrupt
+
+        args = types.SimpleNamespace(
+            settings_file="/nonexistent/touchline/settings.json",
+            sounds_dir="/nonexistent/touchline/sounds",
+            prev_pin=18, next_pin=19, ok_pin=25)
+        gpio = types.SimpleNamespace(Button=Mock(return_value=Mock(is_pressed=False)))
+        with patch.dict("sys.modules", {"gpiozero": gpio}), \
+                patch("main.create_matrix", return_value=Mock()), \
+                patch("main.Audio"), \
+                patch("main.sensor_config.create_detector", return_value=detector), \
+                patch("main.make_sensor", return_value=(sensor, i2c)) as make, \
+                patch("main.read_grid", return_value=invalid), \
+                patch("main.LOG.warning") as warning, \
+                patch("main.time.monotonic", side_effect=lambda: clock[0]), \
+                patch("main.time.sleep", side_effect=sleep):
+            with self.assertRaises(KeyboardInterrupt):
+                run(args)
+        make.assert_called_once()
+        self.assertTrue(warning.called)
+        self.assertFalse(detector.fault)
+        self.assertFalse(detector.occupied)
+        self.assertEqual(detector.last_frame, 107.0)
+        i2c.deinit.assert_called_once()
+
+    def test_application_reconnects_on_io_error_after_all_invalid_frame(self):
         broken, recovered = Mock(), Mock()
-        broken.check_data_ready.return_value = True
+        broken.check_data_ready.side_effect = [True, OSError(5, "I/O error")]
+        recovered.check_data_ready.return_value = False
+        i2c1, i2c2 = Mock(), Mock()
+        invalid = [[(0, False)] * 8 for _ in range(8)]
+        clock = [100.0]
+
+        def sleep(_duration):
+            clock[0] += 1
+            if clock[0] > 103:
+                raise KeyboardInterrupt
+
+        args = types.SimpleNamespace(
+            settings_file="/nonexistent/touchline/settings.json",
+            sounds_dir="/nonexistent/touchline/sounds",
+            prev_pin=18, next_pin=19, ok_pin=25)
+        gpio = types.SimpleNamespace(Button=Mock(return_value=Mock(is_pressed=False)))
+        with patch.dict("sys.modules", {"gpiozero": gpio}), \
+                patch("main.create_matrix", return_value=Mock()), \
+                patch("main.Audio"), \
+                patch("main.make_sensor", side_effect=[(broken, i2c1), (recovered, i2c2)]) as make, \
+                patch("main.read_grid", return_value=invalid), \
+                patch("main.time.monotonic", side_effect=lambda: clock[0]), \
+                patch("main.time.sleep", side_effect=sleep), \
+                self.assertLogs("touchline", level="ERROR") as logs:
+            with self.assertRaises(KeyboardInterrupt):
+                run(args)
+        self.assertIn("Sensor failure during data-ready check", logs.output[0])
+        self.assertIn("ready_frames=1 usable_frames=1; reconnecting", logs.output[0])
+        self.assertEqual(make.call_count, 2)
+        i2c1.deinit.assert_called_once()
+        i2c2.deinit.assert_called_once()
+
+    def test_application_reconnects_when_frames_stop(self):
+        broken, recovered = Mock(), Mock()
         recovered.check_data_ready.return_value = False
         i2c1, i2c2 = Mock(), Mock()
         clock = [100.0]
+        broken.check_data_ready.side_effect = lambda: clock[0] < 101
         connection_times = []
 
         def make_sensor(_hz):
@@ -290,7 +361,7 @@ class GuidedCalibrationTests(unittest.TestCase):
 
         def sleep(_duration):
             clock[0] += 0.5
-            if clock[0] > 107.5:
+            if clock[0] > 108.5:
                 raise KeyboardInterrupt
         args = types.SimpleNamespace(
             settings_file="/nonexistent/touchline/settings.json",
@@ -308,10 +379,10 @@ class GuidedCalibrationTests(unittest.TestCase):
                 self.assertLogs("touchline", level="ERROR") as logs:
             with self.assertRaises(KeyboardInterrupt):
                 run(args)
-        self.assertIn("ready_frames=11 usable_frames=0", logs.output[0])
-        self.assertIn("last_usable_age=never", logs.output[0])
+        self.assertIn("ready_frames=2 usable_frames=2", logs.output[0])
+        self.assertIn("last_frame_age=5.50s", logs.output[0])
         self.assertIn("timeout=5.00s", logs.output[0])
-        self.assertEqual(connection_times, [100.0, 107.0])
+        self.assertEqual(connection_times, [100.0, 108.0])
         i2c1.deinit.assert_called_once()
         i2c2.deinit.assert_called_once()
 

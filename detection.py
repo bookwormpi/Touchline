@@ -69,11 +69,11 @@ class OccupancyDetector:
         self.occupied = None
         self.candidate = None
         self.candidate_since = None
-        self.last_valid = None
+        self.last_frame = None
         self.fault = True
 
     def invalidate(self):
-        self.last_valid = None
+        self.last_frame = None
         self.fault = True
         self.occupied = None
         self._reset_candidate()
@@ -82,7 +82,7 @@ class OccupancyDetector:
         self.candidate = self.candidate_since = None
 
     def check_timeout(self, now):
-        if self.last_valid is None or now - self.last_valid > self.config.frame_timeout:
+        if self.last_frame is None or now - self.last_frame > self.config.frame_timeout:
             self.fault = True
             self.occupied = None
             self._reset_candidate()
@@ -91,11 +91,8 @@ class OccupancyDetector:
     def update(self, grid, now):
         self.check_timeout(now)
         oriented = orient_grid(grid, self.rotation)
-        if not active_readings(oriented, self.dead_zones):
-            self._reset_candidate()
-            return None
         readings = occupancy_readings(oriented, self.dead_zones, self.config.max_distance_mm)
-        self.last_valid = now
+        self.last_frame = now
         self.fault = False
         near = sum(mm <= self.config.enter_mm for mm in readings)
         not_clear = sum(mm < self.config.exit_mm for mm in readings)

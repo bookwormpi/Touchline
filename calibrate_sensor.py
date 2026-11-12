@@ -58,7 +58,7 @@ def print_grid(grid, detector):
             cells.append(f"{cell:>{width}}")
         print(f"{y:>2}  " + " ".join(cells))
     print("X=dead zone, *=assumed distance for invalid or non-positive reading; values in mm")
-    print("A frame with no valid active zones is not used for occupancy detection.")
+    print("All-invalid frames are assumed clear for occupancy; calibration uses valid readings only.")
 
 
 def print_summary(frames, detector):

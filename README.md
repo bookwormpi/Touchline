@@ -163,11 +163,11 @@ when using sudo.
 
 `Sensor initialized` means only that startup succeeded; readings must still be
 received and validated. Incomplete frames and I/O errors are logged, the sensor
-state is cleared, and reconnection is attempted. A usable frame has at least one
-actual valid, positive-distance active zone. The configured `FRAME_TIMEOUT`
-defaults to 5 seconds: after that long without a usable frame, the workout app
-marks the sensor faulty and reconnects. This also covers missing frames and
-determines how long the last occupancy state can remain in use. I/O errors
+state is cleared, and reconnection is attempted. Every correctly formed frame,
+including an all-invalid one, is used for occupancy detection. The configured
+`FRAME_TIMEOUT` defaults to 5 seconds: after that long without a frame, the
+workout app marks the sensor faulty and reconnects. This determines how long the
+last occupancy state can remain in use when frames stop arriving. I/O errors
 trigger reconnection immediately. Repeated `Errno 5` errors can
 have physical causes that software cannot determine: with power off, check
 sensor power, ground, SDA/SCL wiring and connectors, compatible logic levels,
@@ -238,11 +238,11 @@ assumed to be `MAX_DISTANCE_MM` (default 4000 mm), which must exceed `EXIT_MM`.
 This is an assumption, not a measured distance: an invalid zone may actually
 contain a nearby swimmer, so this policy can incorrectly mark the area clear.
 The occupied test counts zones at or below entry distance; a clear test requires
-fewer than `MIN_ZONES` zones below exit distance. A frame with no actual valid
-active-zone measurements cannot trigger transitions and interrupts an
-in-progress debounce; prolonged all-invalid or missing frames produce a sensor
-error and reconnection attempts. The grid marks assumed distances with `*`;
-calibration summaries and recommendations use actual valid readings only.
+fewer than `MIN_ZONES` zones below exit distance. Even an all-invalid frame is
+treated as clear and can trigger a departure after the normal debounce; it does
+not trigger a reconnect. Missing frames still produce a sensor error and
+reconnection attempts. The grid marks assumed distances with `*`; calibration
+summaries and recommendations use actual valid readings only.
 
 Test a stationary swimmer, brief splashes, complete departures and repeated
 approaches, with no swimmer and with real pool conditions. Confirm the
