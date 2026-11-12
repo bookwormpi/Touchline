@@ -2,11 +2,11 @@ import contextlib
 import io
 import types
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
 from calibrate_sensor import capture, main as calibrate_main, print_grid, print_summary, recommend
 from detection import DetectionConfig, OccupancyDetector, orient_grid
-from main import log_bad_frame, parse_args, read_grid, run
+from main import check_sensor_ready, log_bad_frame, parse_args, read_grid, run
 from sensor_config import create_detector
 from tofmatrix import main as tofmatrix_main
 
@@ -105,6 +105,124 @@ class RotationAndMaskTests(unittest.TestCase):
             tofmatrix_main()
         self.assertEqual(output.getvalue().splitlines()[1].split()[:3], ["0", "4000*", "1500"])
         close.assert_called_once_with(sensor, i2c)
+
+    def test_data_ready_retries_twice_and_preserves_return_value(self):
+        sensor = Mock()
+        sensor.check_data_ready.side_effect = [OSError(121, "remote I/O"),
+                                               OSError(5, "I/O error"), False]
+        with patch("main.time.sleep") as sleep, self.assertLogs("touchline", level="WARNING") as logs:
+            self.assertFalse(check_sensor_ready(sensor))
+        self.assertEqual(sensor.check_data_ready.call_count, 3)
+        self.assertEqual(sleep.call_args_list, [call(0.05), call(0.05)])
+        self.assertEqual(len(logs.output), 2)
+
+    def test_data_ready_raises_last_io_error_after_two_retries(self):
+        sensor = Mock()
+        sensor.check_data_ready.side_effect = [OSError(121, "first"),
+                                               OSError(5, "second"),
+                                               OSError(121, "last")]
+        with patch("main.time.sleep"), self.assertLogs("touchline", level="WARNING"):
+            with self.assertRaisesRegex(OSError, "last"):
+                check_sensor_ready(sensor)
+        self.assertEqual(sensor.check_data_ready.call_count, 3)
+
+    def test_data_ready_does_not_retry_other_errors(self):
+        sensor = Mock()
+        sensor.check_data_ready.side_effect = ValueError("invalid")
+        with patch("main.time.sleep") as sleep, self.assertRaisesRegex(ValueError, "invalid"):
+            check_sensor_ready(sensor)
+        sensor.check_data_ready.assert_called_once()
+        sleep.assert_not_called()
+
+    def test_live_grid_retries_transient_error_without_reconnecting(self):
+        sensor, i2c = Mock(), Mock()
+        sensor.check_data_ready.side_effect = [OSError(121, "remote I/O"),
+                                               OSError(5, "I/O error"), True]
+
+        def sleep(duration):
+            if duration == 0.02:
+                raise KeyboardInterrupt
+
+        with patch("sys.argv", ["tofmatrix.py", "--sensor-only"]), \
+                patch("tofmatrix.make_sensor", return_value=(sensor, i2c)) as make, \
+                patch("tofmatrix.read_grid", return_value=frame(1500)), \
+                patch("tofmatrix.close_sensor") as close, \
+                patch("tofmatrix.time.sleep", side_effect=sleep), \
+                contextlib.redirect_stdout(io.StringIO()), \
+                self.assertLogs("touchline", level="WARNING"):
+            tofmatrix_main()
+        make.assert_called_once()
+        self.assertEqual(sensor.check_data_ready.call_count, 3)
+        close.assert_called_once_with(sensor, i2c)
+
+    def test_live_grid_reconnects_after_retries_are_exhausted(self):
+        broken, recovered = Mock(), Mock()
+        broken.check_data_ready.side_effect = OSError(121, "remote I/O")
+        recovered.check_data_ready.return_value = True
+        i2c1, i2c2 = Mock(), Mock()
+
+        def sleep(duration):
+            if duration == 0.02:
+                raise KeyboardInterrupt
+
+        with patch("sys.argv", ["tofmatrix.py", "--sensor-only"]), \
+                patch("tofmatrix.make_sensor", side_effect=[(broken, i2c1), (recovered, i2c2)]) as make, \
+                patch("tofmatrix.read_grid", return_value=frame(1500)), \
+                patch("tofmatrix.close_sensor") as close, \
+                patch("tofmatrix.time.sleep", side_effect=sleep) as sleeps, \
+                contextlib.redirect_stdout(io.StringIO()), \
+                self.assertLogs("touchline", level="ERROR") as logs:
+            tofmatrix_main()
+        self.assertEqual(broken.check_data_ready.call_count, 3)
+        self.assertEqual(make.call_count, 2)
+        self.assertEqual(close.call_args_list, [call(broken, i2c1), call(recovered, i2c2)])
+        self.assertIn(call(2), sleeps.call_args_list)
+        self.assertIn("Sensor diagnostic failure; reconnecting", logs.output[0])
+
+    def test_live_grid_retries_failed_initialization(self):
+        sensor, i2c = Mock(), Mock()
+        sensor.check_data_ready.return_value = True
+
+        def sleep(duration):
+            if duration == 0.02:
+                raise KeyboardInterrupt
+
+        with patch("sys.argv", ["tofmatrix.py", "--sensor-only"]), \
+                patch("tofmatrix.make_sensor", side_effect=[OSError(5, "I/O error"),
+                                                             (sensor, i2c)]) as make, \
+                patch("tofmatrix.read_grid", return_value=frame(1500)), \
+                patch("tofmatrix.close_sensor") as close, \
+                patch("tofmatrix.time.sleep", side_effect=sleep), \
+                contextlib.redirect_stdout(io.StringIO()), \
+                self.assertLogs("touchline", level="ERROR"):
+            tofmatrix_main()
+        self.assertEqual(make.call_count, 2)
+        close.assert_called_once_with(sensor, i2c)
+
+    def test_live_grid_reconnects_when_frames_stop(self):
+        broken, recovered = Mock(), Mock()
+        broken.check_data_ready.return_value = False
+        recovered.check_data_ready.return_value = True
+        i2c1, i2c2 = Mock(), Mock()
+        clock = [0.0]
+
+        def sleep(duration):
+            clock[0] += duration
+            if duration == 0.02 and clock[0] > 2:
+                raise KeyboardInterrupt
+
+        with patch("sys.argv", ["tofmatrix.py", "--timeout", "0.01"]), \
+                patch("tofmatrix.make_sensor", side_effect=[(broken, i2c1), (recovered, i2c2)]) as make, \
+                patch("tofmatrix.read_grid", return_value=frame(1500)), \
+                patch("tofmatrix.close_sensor") as close, \
+                patch("tofmatrix.time.monotonic", side_effect=lambda: clock[0]), \
+                patch("tofmatrix.time.sleep", side_effect=sleep), \
+                contextlib.redirect_stdout(io.StringIO()), \
+                self.assertLogs("touchline", level="ERROR") as logs:
+            tofmatrix_main()
+        self.assertIn("No sensor frame received before timeout", logs.output[0])
+        self.assertEqual(make.call_count, 2)
+        self.assertEqual(close.call_args_list, [call(broken, i2c1), call(recovered, i2c2)])
 
 
 class GuidedCalibrationTests(unittest.TestCase):
@@ -278,6 +396,38 @@ class GuidedCalibrationTests(unittest.TestCase):
         make.assert_called_once()
         i2c.deinit.assert_called_once()
 
+    def test_application_retries_transient_data_ready_errors(self):
+        sensor, i2c = Mock(), Mock()
+        sensor.check_data_ready.side_effect = [OSError(121, "remote I/O"),
+                                               OSError(5, "I/O error")] + [True] * 10
+        grid = frame(1500)
+        clock = [100.0]
+
+        def sleep(duration):
+            clock[0] += duration
+            if duration == 0.02:
+                raise KeyboardInterrupt
+
+        args = types.SimpleNamespace(
+            settings_file="/nonexistent/touchline/settings.json",
+            sounds_dir="/nonexistent/touchline/sounds",
+            prev_pin=18, next_pin=19, ok_pin=25)
+        gpio = types.SimpleNamespace(Button=Mock(return_value=Mock(is_pressed=False)))
+        with patch.dict("sys.modules", {"gpiozero": gpio}), \
+                patch("main.create_matrix", return_value=Mock()), \
+                patch("main.Audio"), \
+                patch("main.make_sensor", return_value=(sensor, i2c)) as make, \
+                patch("main.read_grid", return_value=grid), \
+                patch("main.time.monotonic", side_effect=lambda: clock[0]), \
+                patch("main.time.sleep", side_effect=sleep), \
+                self.assertLogs("touchline", level="WARNING") as logs:
+            with self.assertRaises(KeyboardInterrupt):
+                run(args)
+        make.assert_called_once()
+        self.assertEqual(sensor.check_data_ready.call_count, 3)
+        self.assertEqual(len(logs.output), 2)
+        i2c.deinit.assert_called_once()
+
     def test_application_uses_all_invalid_frames_without_reconnecting(self):
         sensor, i2c = Mock(), Mock()
         sensor.check_data_ready.return_value = True
@@ -315,15 +465,15 @@ class GuidedCalibrationTests(unittest.TestCase):
 
     def test_application_reconnects_on_io_error_after_all_invalid_frame(self):
         broken, recovered = Mock(), Mock()
-        broken.check_data_ready.side_effect = [True, OSError(5, "I/O error")]
+        broken.check_data_ready.side_effect = [True] + [OSError(5, "I/O error")] * 3
         recovered.check_data_ready.return_value = False
         i2c1, i2c2 = Mock(), Mock()
         invalid = [[(0, False)] * 8 for _ in range(8)]
         clock = [100.0]
 
         def sleep(_duration):
-            clock[0] += 1
-            if clock[0] > 103:
+            clock[0] += 0.05 if _duration == 0.05 else 1
+            if clock[0] > 104:
                 raise KeyboardInterrupt
 
         args = types.SimpleNamespace(
@@ -343,6 +493,7 @@ class GuidedCalibrationTests(unittest.TestCase):
                 run(args)
         self.assertIn("Sensor failure during data-ready check", logs.output[0])
         self.assertIn("ready_frames=1 usable_frames=1; reconnecting", logs.output[0])
+        self.assertEqual(broken.check_data_ready.call_count, 4)
         self.assertEqual(make.call_count, 2)
         i2c1.deinit.assert_called_once()
         i2c2.deinit.assert_called_once()

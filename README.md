@@ -167,8 +167,11 @@ state is cleared, and reconnection is attempted. Every correctly formed frame,
 including an all-invalid one, is used for occupancy detection. The configured
 `FRAME_TIMEOUT` defaults to 5 seconds: after that long without a frame, the
 workout app marks the sensor faulty and reconnects. This determines how long the
-last occupancy state can remain in use when frames stop arriving. I/O errors
-trigger reconnection immediately. Repeated `Errno 5` errors can
+last occupancy state can remain in use when frames stop arriving. The workout
+app and live diagnostic retry an I/O failure during a data-ready check twice,
+with 50 ms between attempts, before reconnecting. Other sensor errors trigger
+reconnection without these retries. The live diagnostic also reconnects after a
+frame timeout or failed initialization. Repeated `Errno 5` errors can
 have physical causes that software cannot determine: with power off, check
 sensor power, ground, SDA/SCL wiring and connectors, compatible logic levels,
 and appropriate I2C pull-ups for the sensor breakout. Enable I2C and verify the

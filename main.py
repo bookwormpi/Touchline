@@ -100,6 +100,16 @@ def close_sensor(sensor, i2c):
             LOG.warning("Could not release I2C: %s", exc)
 
 
+def check_sensor_ready(sensor):
+    for attempt in (1, 2):
+        try:
+            return sensor.check_data_ready()
+        except OSError as exc:
+            LOG.warning("Sensor data-ready check failed: %s; retrying (%d/2)", exc, attempt)
+            time.sleep(0.05)
+    return sensor.check_data_ready()
+
+
 class SensorGrid(list):
     """Distance/valid grid retaining the driver's original per-zone statuses."""
 
@@ -310,7 +320,9 @@ def run(args):
             if sensor is not None:
                 try:
                     stage = "data-ready check"
-                    if sensor.check_data_ready():
+                    ready = check_sensor_ready(sensor)
+                    now = time.monotonic()
+                    if ready:
                         stage = "frame read"
                         ready_frames += 1
                         grid = read_grid(sensor)
@@ -346,6 +358,7 @@ def run(args):
                         detector.invalidate()
                         retry_at = now + 2
                 except (OSError, RuntimeError, ValueError, IndexError, struct.error):
+                    now = time.monotonic()
                     LOG.exception("Sensor failure during %s after %.2fs: ready_frames=%d "
                                   "usable_frames=%d; reconnecting",
                                   stage, now - connected_at, ready_frames, usable_frames)
