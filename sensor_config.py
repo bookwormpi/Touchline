@@ -1,9 +1,9 @@
 """Edit installation-specific sensor calibration and button GPIO values."""
 
 # BCM GPIO numbers for the three normally-open buttons.
-PREV_PIN = 18
+PREV_PIN = 25
 NEXT_PIN = 19
-OK_PIN = 25
+OK_PIN = 18
 
 # Rotation is clockwise; dead-zone coordinates are (row, column) after rotation,
 # zero-based from the top left of the grid printed by the calibration tool.
