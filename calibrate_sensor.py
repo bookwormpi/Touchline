@@ -26,9 +26,9 @@ def recommend(empty_frames, occupied_frames, detector):
         for grid in frames:
             readings = sorted(active_readings(orient_grid(grid, detector.rotation),
                                               detector.dead_zones))
-            if len(readings) < config.min_valid:
+            if len(readings) < config.min_zones:
                 raise ValueError(f"{label} capture has a frame with fewer than "
-                                 f"{config.min_valid} valid active zones")
+                                 f"{config.min_zones} valid active zones needed for calibration")
             kth_distances.append(readings[config.min_zones - 1])
         results.append(kth_distances)
     empty, occupied = results
@@ -58,8 +58,7 @@ def print_grid(grid, detector):
 def print_summary(frames, detector):
     oriented = [orient_grid(grid, detector.rotation) for grid in frames]
     counts = [len(active_readings(grid, detector.dead_zones)) for grid in oriented]
-    print(f"Active valid zones per frame: min={min(counts)} max={max(counts)} "
-          f"required={detector.config.min_valid}")
+    print(f"Active valid zones per frame: min={min(counts)} max={max(counts)}")
     print("Per-zone median mm/valid frames (X=dead, -=no valid samples):")
     print("       " + " ".join(f"{x:>9}" for x in range(8)))
     for y in range(8):
@@ -89,7 +88,7 @@ def capture(sensor, detector, duration):
                 print_grid(grid, detector)
             frames.append(grid)
             count = len(active_readings(orient_grid(grid, detector.rotation), detector.dead_zones))
-            if count < detector.config.min_valid:
+            if not count:
                 log_bad_frame(grid, detector, f"calibration frame {len(frames)}")
             LOG.debug("Calibration frame=%d active_valid=%d", len(frames), count)
             last_frame = now

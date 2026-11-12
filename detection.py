@@ -9,19 +9,19 @@ class DetectionConfig:
     enter_mm: int = 1000
     exit_mm: int = 1200
     min_zones: int = 3
-    min_valid: int = 8
+    max_distance_mm: int = 4000
     enter_seconds: float = 0.3
     exit_seconds: float = 0.5
     frame_timeout: float = 1.0
 
     def __post_init__(self):
         if any(type(value) is not int for value in
-               (self.enter_mm, self.exit_mm, self.min_zones, self.min_valid)):
+               (self.enter_mm, self.exit_mm, self.min_zones, self.max_distance_mm)):
             raise ValueError("Distances and zone counts must be integers")
-        if not 0 < self.enter_mm < self.exit_mm:
-            raise ValueError("Detection distances must satisfy 0 < enter < exit")
-        if not 1 <= self.min_zones <= self.min_valid <= 64:
-            raise ValueError("Require 1 <= min_zones <= min_valid <= 64")
+        if not 0 < self.enter_mm < self.exit_mm < self.max_distance_mm:
+            raise ValueError("Detection distances must satisfy 0 < enter < exit < max distance")
+        if not 1 <= self.min_zones <= 64:
+            raise ValueError("Require 1 <= min_zones <= 64")
         if not all(type(value) in (int, float) and math.isfinite(value) and value > 0 for value in
                    (self.enter_seconds, self.exit_seconds, self.frame_timeout)):
             raise ValueError("Debounce and timeout values must be positive")
@@ -43,6 +43,12 @@ def active_readings(grid, dead_zones):
             if (y, x) not in dead_zones and valid and mm > 0]
 
 
+def occupancy_readings(grid, dead_zones, max_distance_mm):
+    return [mm if valid and mm > 0 else max_distance_mm
+            for y, row in enumerate(grid) for x, (mm, valid) in enumerate(row)
+            if (y, x) not in dead_zones]
+
+
 class OccupancyDetector:
     def __init__(self, config, rotation=0, dead_zones=frozenset()):
         self.config = config
@@ -53,8 +59,8 @@ class OccupancyDetector:
                     any(type(value) is not int or not 0 <= value < 8 for value in zone)):
                 raise ValueError(f"Invalid dead zone {zone!r}; use (row, column) from 0 to 7")
         self.dead_zones = frozenset(dead_zones)
-        if 64 - len(self.dead_zones) < config.min_valid:
-            raise ValueError("Dead zones leave fewer active zones than MIN_VALID")
+        if 64 - len(self.dead_zones) < config.min_zones:
+            raise ValueError("Dead zones leave fewer active zones than MIN_ZONES")
         self.rotation = rotation
         self.occupied = None
         self.candidate = None
@@ -80,10 +86,11 @@ class OccupancyDetector:
 
     def update(self, grid, now):
         self.check_timeout(now)
-        readings = active_readings(orient_grid(grid, self.rotation), self.dead_zones)
-        if len(readings) < self.config.min_valid:
+        oriented = orient_grid(grid, self.rotation)
+        if not active_readings(oriented, self.dead_zones):
             self._reset_candidate()
             return None
+        readings = occupancy_readings(oriented, self.dead_zones, self.config.max_distance_mm)
         self.last_valid = now
         self.fault = False
         near = sum(mm <= self.config.enter_mm for mm in readings)

@@ -16,10 +16,10 @@ DEAD_ZONES = frozenset({
 ENTER_MM = 1000
 EXIT_MM = 1200
 MIN_ZONES = 3
-MIN_VALID = 8
+MAX_DISTANCE_MM = 4000
 ENTER_SECONDS = 0.3
 EXIT_SECONDS = 0.5
-FRAME_TIMEOUT = 1.0
+FRAME_TIMEOUT = 5.0
 RANGING_HZ = 10
 
 
@@ -28,6 +28,7 @@ def create_detector():
 
     if type(RANGING_HZ) is not int or not 1 <= RANGING_HZ <= 15:
         raise ValueError("RANGING_HZ must be an integer from 1 to 15 for 8x8")
-    config = DetectionConfig(ENTER_MM, EXIT_MM, MIN_ZONES, MIN_VALID,
-                             ENTER_SECONDS, EXIT_SECONDS, FRAME_TIMEOUT)
+    config = DetectionConfig(enter_mm=ENTER_MM, exit_mm=EXIT_MM, min_zones=MIN_ZONES,
+                             max_distance_mm=MAX_DISTANCE_MM, enter_seconds=ENTER_SECONDS,
+                             exit_seconds=EXIT_SECONDS, frame_timeout=FRAME_TIMEOUT)
     return OccupancyDetector(config, ROTATION_DEGREES, DEAD_ZONES)

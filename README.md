@@ -163,7 +163,12 @@ when using sudo.
 
 `Sensor initialized` means only that startup succeeded; readings must still be
 received and validated. Incomplete frames and I/O errors are logged, the sensor
-state is cleared, and reconnection is attempted. Repeated `Errno 5` errors can
+state is cleared, and reconnection is attempted. A usable frame has at least one
+actual valid, positive-distance active zone. The configured `FRAME_TIMEOUT`
+defaults to 5 seconds: after that long without a usable frame, the workout app
+marks the sensor faulty and reconnects. This also covers missing frames and
+determines how long the last occupancy state can remain in use. I/O errors
+trigger reconnection immediately. Repeated `Errno 5` errors can
 have physical causes that software cannot determine: with power off, check
 sensor power, ground, SDA/SCL wiring and connectors, compatible logic levels,
 and appropriate I2C pull-ups for the sensor breakout. Enable I2C and verify the
@@ -179,7 +184,7 @@ sudo .venv/bin/python main.py --log-level DEBUG --log-file /tmp/touchline-sensor
 
 Logs include initialization stages, failure tracebacks and errno, data-ready and
 usable-frame counts, active valid zones, raw target status counts, timeouts,
-and reconnect attempts. Each frame with too few valid active zones is logged
+and reconnect attempts. Each frame with no valid active zones is logged
 at WARNING with its full rotated 8x8 distances, validity, original target
 status codes and dead-zone coordinates. Malformed frames include the available
 raw arrays (capped at 256 values) and their lengths. A read failure before a
@@ -187,9 +192,8 @@ frame is returned has no frame contents to log. Calibration and the live
 diagnostic log bad frames too. Logging every bad frame can grow quickly even
 at INFO; DEBUG also logs every good frame. Stop
 the program with Ctrl+C and share the log after checking it for private data.
-`ready_frames=0` indicates no frame became ready; frames with insufficient
-active valid zones instead indicate optical returns/configuration rather than
-proving an I2C disconnect. A malformed frame or I/O exception is logged with
+`ready_frames=0` indicates no frame became ready; frames with no valid active
+zones do not by themselves prove an I2C disconnect. A malformed frame or I/O exception is logged with
 its operation. These observations cannot establish the root cause without
 testing the Pi, wiring, sensor and power.
 
@@ -200,7 +204,7 @@ Stop the workout app first: only one program should control the sensor. Edit
 180, or 270), `DEAD_ZONES`, thresholds, debounce, timeout and ranging frequency.
 Dead zones are `(row, column)` coordinates from 0 to 7, measured **after**
 rotation with `(0, 0)` at the top left. They are excluded from both the
-occupied count and valid count, and at least `MIN_VALID` zones must remain.
+occupied count and valid count, and at least `MIN_ZONES` zones must remain.
 Defaults are examples, not calibrated values.
 
 Run the live grid to inspect orientation, valid readings and dead zones:
@@ -221,18 +225,23 @@ sudo .venv/bin/python calibrate_sensor.py --seconds 10 \
 The tool displays the first grid of each capture, frame counts, valid-zone
 coverage and the median distance/valid-sample count for every zone. It compares
 the `MIN_ZONES`-th closest valid active distance in every frame. It only prints
-candidate entry/exit thresholds if at least five frames per condition have
-enough valid zones and the two captures are completely separated. Overlap,
+candidate entry/exit thresholds if at least five frames per condition each have
+at least `MIN_ZONES` actual valid readings and the two captures are completely separated. Overlap,
 timeouts and incomplete frames fail explicitly without changing the code.
 Copy the printed values into `sensor_config.py`, review the other values,
 and restart the app. A successful recommendation applies only to the sampled
 conditions; it is not automatic calibration or proof of reliable detection.
 
-The occupied test counts valid zones at or below entry distance. A clear test
-requires fewer than `MIN_ZONES` valid readings below exit distance. Frames with
-fewer than `MIN_VALID` valid readings cannot trigger transitions; prolonged
-invalid or missing data produces a sensor error and reconnection attempts.
-Invalid frames interrupt an in-progress debounce.
+For occupancy detection, invalid or non-positive active-zone measurements are
+assumed to be `MAX_DISTANCE_MM` (default 4000 mm), which must exceed `EXIT_MM`.
+This is an assumption, not a measured distance: an invalid zone may actually
+contain a nearby swimmer, so this policy can incorrectly mark the area clear.
+The occupied test counts zones at or below entry distance; a clear test requires
+fewer than `MIN_ZONES` zones below exit distance. A frame with no actual valid
+active-zone measurements cannot trigger transitions and interrupts an
+in-progress debounce; prolonged all-invalid or missing frames produce a sensor
+error and reconnection attempts. Calibration and the diagnostic grid retain
+the actual validity information rather than reporting assumed distances.
 
 Test a stationary swimmer, brief splashes, complete departures and repeated
 approaches, with no swimmer and with real pool conditions. Confirm the

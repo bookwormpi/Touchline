@@ -137,17 +137,17 @@ def read_grid(sensor):
 
 
 def log_bad_frame(grid, detector, context):
-    """Log frames which cannot satisfy the detector's active-zone requirement."""
+    """Log frames with no valid active-zone measurements."""
     oriented = orient_grid(grid, detector.rotation)
     count = len(active_readings(oriented, detector.dead_zones))
-    if count >= detector.config.min_valid:
+    if count:
         return
     statuses = getattr(grid, "statuses", None)
     if statuses is not None:
         statuses = orient_grid(statuses, detector.rotation)
-    LOG.warning("Bad sensor frame (%s): active_valid=%d required=%d rotation=%d "
+    LOG.warning("Bad sensor frame (%s): active_valid=%d rotation=%d "
                 "dead_zones=%s distance_mm=%s valid=%s target_status=%s",
-                context, count, detector.config.min_valid, detector.rotation,
+                context, count, detector.rotation,
                 sorted(detector.dead_zones),
                 [[distance for distance, _ in row] for row in oriented],
                 [[valid for _, valid in row] for row in oriented], statuses)
@@ -318,14 +318,13 @@ def run(args):
                         readings = active_readings(orient_grid(grid, detector.rotation),
                                                    detector.dead_zones)
                         valid_count = len(readings)
-                        if valid_count >= detector.config.min_valid:
+                        if valid_count:
                             usable_frames += 1
                         else:
                             log_bad_frame(grid, detector, f"workout frame {ready_frames}")
-                        LOG.debug("Sensor frame active_valid=%d/%d near=%d min_valid=%d",
+                        LOG.debug("Sensor frame active_valid=%d/%d near=%d",
                                   valid_count, 64 - len(detector.dead_zones),
-                                  sum(value <= detector.config.enter_mm for value in readings),
-                                  detector.config.min_valid)
+                                  sum(value <= detector.config.enter_mm for value in readings))
                         previous_occupancy = detector.occupied
                         event = detector.update(grid, now)
                         if settings.sound and (event == "arrived" or

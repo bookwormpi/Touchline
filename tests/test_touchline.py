@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from audio import Audio
-from detection import DetectionConfig, OccupancyDetector
+from detection import DetectionConfig, OccupancyDetector, occupancy_readings
 from interface_ai import create_matrix, render_frame
 from main import ButtonInput, handle_button, make_sensor, read_grid, run
 from navigation import Navigation
@@ -131,7 +131,7 @@ class SensorTests(unittest.TestCase):
                         read_grid(sensor)
 
     def test_debounce_hysteresis_invalid_frames_and_recovery(self):
-        config = DetectionConfig(min_zones=3, min_valid=8,
+        config = DetectionConfig(min_zones=3,
                                  enter_seconds=0.3, exit_seconds=0.5, frame_timeout=1)
         detector = OccupancyDetector(config)
         near = [[(500, True)] * 8 for _ in range(8)]
@@ -152,6 +152,36 @@ class SensorTests(unittest.TestCase):
         self.assertIsNone(detector.update(far, 3.8))
         self.assertFalse(detector.occupied)
         self.assertFalse(detector.fault)
+
+    def test_partial_invalid_readings_are_assumed_far(self):
+        config = DetectionConfig(enter_seconds=0.1, exit_seconds=0.1, frame_timeout=1)
+        detector = OccupancyDetector(config, dead_zones={(0, 0)})
+        near = [[(0, False)] * 8 for _ in range(8)]
+        near[0][1:4] = [(500, True)] * 3
+        near[0][4] = (-1, True)
+        self.assertEqual(occupancy_readings(near, detector.dead_zones, 4000)[:5],
+                         [500, 500, 500, 4000, 4000])
+        detector.update(near, 0)
+        detector.update(near, 0.2)
+        self.assertTrue(detector.occupied)
+
+        mostly_invalid = [[(0, False)] * 8 for _ in range(8)]
+        mostly_invalid[0][1] = (1500, True)
+        detector.update(mostly_invalid, 0.3)
+        self.assertEqual(detector.update(mostly_invalid, 0.5), "left")
+        self.assertFalse(detector.fault)
+        self.assertEqual(detector.last_valid, 0.5)
+
+        all_invalid = [[(0, False)] * 8 for _ in range(8)]
+        detector.update(all_invalid, 0.6)
+        self.assertEqual(detector.last_valid, 0.5)
+        self.assertFalse(detector.check_timeout(1.5))
+        self.assertTrue(detector.check_timeout(1.51))
+        self.assertIsNone(detector.occupied)
+
+    def test_assumed_distance_must_exceed_exit_threshold(self):
+        with self.assertRaisesRegex(ValueError, "exit < max distance"):
+            DetectionConfig(exit_mm=4000, max_distance_mm=4000)
 
     def test_sensor_events_drive_workout(self):
         detector = OccupancyDetector(DetectionConfig(enter_seconds=0.1, exit_seconds=0.1))
