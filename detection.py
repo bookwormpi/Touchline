@@ -43,8 +43,12 @@ def active_readings(grid, dead_zones):
             if (y, x) not in dead_zones and valid and mm > 0]
 
 
+def occupancy_distance(mm, valid, max_distance_mm):
+    return mm if valid and mm > 0 else max_distance_mm
+
+
 def occupancy_readings(grid, dead_zones, max_distance_mm):
-    return [mm if valid and mm > 0 else max_distance_mm
+    return [occupancy_distance(mm, valid, max_distance_mm)
             for y, row in enumerate(grid) for x, (mm, valid) in enumerate(row)
             if (y, x) not in dead_zones]
 

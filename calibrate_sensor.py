@@ -8,7 +8,7 @@ import statistics
 import struct
 import time
 
-from detection import active_readings, orient_grid
+from detection import active_readings, occupancy_distance, orient_grid
 from main import close_sensor, log_bad_frame, make_sensor, read_grid
 import sensor_config
 
@@ -45,14 +45,20 @@ def recommend(empty_frames, occupied_frames, detector):
 
 def print_grid(grid, detector):
     oriented = orient_grid(grid, detector.rotation)
-    print("      " + " ".join(f"{x:>4}" for x in range(8)))
+    width = max(5, len(str(detector.config.max_distance_mm)) + 1)
+    print("    " + " ".join(f"{x:>{width}}" for x in range(8)))
     for y, row in enumerate(oriented):
         cells = []
         for x, (distance, valid) in enumerate(row):
-            cells.append("   X" if (y, x) in detector.dead_zones else
-                         f"{distance:4}" if valid and distance > 0 else "   -")
+            if (y, x) in detector.dead_zones:
+                cell = "X"
+            else:
+                value = occupancy_distance(distance, valid, detector.config.max_distance_mm)
+                cell = f"{value}{'*' if not valid or distance <= 0 else ''}"
+            cells.append(f"{cell:>{width}}")
         print(f"{y:>2}  " + " ".join(cells))
-    print("X=dead zone, -=invalid, all other values are millimeters")
+    print("X=dead zone, *=assumed distance for invalid or non-positive reading; values in mm")
+    print("A frame with no valid active zones is not used for occupancy detection.")
 
 
 def print_summary(frames, detector):

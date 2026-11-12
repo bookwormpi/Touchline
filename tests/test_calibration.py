@@ -8,6 +8,7 @@ from calibrate_sensor import capture, main as calibrate_main, print_grid, print_
 from detection import DetectionConfig, OccupancyDetector, orient_grid
 from main import log_bad_frame, parse_args, read_grid, run
 from sensor_config import create_detector
+from tofmatrix import main as tofmatrix_main
 
 
 def frame(value):
@@ -71,6 +72,37 @@ class RotationAndMaskTests(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()) as output:
             print_grid(frame(1500), detector)
         self.assertIn("X", output.getvalue().splitlines()[1])
+
+    def test_grid_marks_assumed_values_and_preserves_validity_and_mask(self):
+        detector = OccupancyDetector(DetectionConfig(max_distance_mm=6000),
+                                     rotation=90, dead_zones={(0, 0)})
+        grid = frame(1500)
+        grid[7][0] = (0, False)
+        grid[6][0] = (200, False)
+        grid[5][0] = (-1, True)
+        grid[4][0] = (6000, True)
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            print_grid(grid, detector)
+        lines = output.getvalue().splitlines()
+        self.assertEqual(lines[1].split()[:5], ["0", "X", "6000*", "6000*", "6000"])
+        self.assertIn("*=assumed distance", output.getvalue())
+        self.assertIn("no valid active zones", output.getvalue())
+        self.assertEqual(grid[6][0], (200, False))
+
+    def test_live_grid_shows_assumed_distance_for_invalid_readings(self):
+        sensor, i2c = Mock(), Mock()
+        sensor.check_data_ready.return_value = True
+        grid = frame(1500)
+        grid[0][0] = (0, False)
+        with patch("sys.argv", ["tofmatrix.py", "--sensor-only"]), \
+                patch("tofmatrix.make_sensor", return_value=(sensor, i2c)), \
+                patch("tofmatrix.read_grid", return_value=grid), \
+                patch("tofmatrix.close_sensor") as close, \
+                patch("tofmatrix.time.sleep", side_effect=KeyboardInterrupt), \
+                contextlib.redirect_stdout(io.StringIO()) as output:
+            tofmatrix_main()
+        self.assertEqual(output.getvalue().splitlines()[1].split()[:3], ["0", "4000*", "1500"])
+        close.assert_called_once_with(sensor, i2c)
 
 
 class GuidedCalibrationTests(unittest.TestCase):

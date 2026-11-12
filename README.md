@@ -213,8 +213,9 @@ Run the live grid to inspect orientation, valid readings and dead zones:
 sudo .venv/bin/python tofmatrix.py --sensor-only
 ```
 
-`X` marks a dead zone; `-` is invalid or non-positive. Identify permanent
-obstructions and other lanes, edit the dead zones, and restart the diagnostic.
+`X` marks a dead zone. A value marked `*`, such as `4000*`, is the assumed
+distance for an invalid or non-positive reading, not a sensor measurement.
+Identify permanent obstructions and other lanes, edit the dead zones, and restart the diagnostic.
 Next, run the guided empty-area and swimmer-at-wall captures:
 
 ```sh
@@ -240,8 +241,8 @@ The occupied test counts zones at or below entry distance; a clear test requires
 fewer than `MIN_ZONES` zones below exit distance. A frame with no actual valid
 active-zone measurements cannot trigger transitions and interrupts an
 in-progress debounce; prolonged all-invalid or missing frames produce a sensor
-error and reconnection attempts. Calibration and the diagnostic grid retain
-the actual validity information rather than reporting assumed distances.
+error and reconnection attempts. The grid marks assumed distances with `*`;
+calibration summaries and recommendations use actual valid readings only.
 
 Test a stationary swimmer, brief splashes, complete departures and repeated
 approaches, with no swimmer and with real pool conditions. Confirm the
