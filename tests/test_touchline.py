@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 
 from audio import Audio
 from detection import DetectionConfig, OccupancyDetector, occupancy_readings
-from interface_ai import create_matrix, render_frame
+from interface_ai import COLORS, create_matrix, render_frame
 from main import ButtonInput, handle_button, make_sensor, read_grid, run
 from navigation import Navigation
 from settings import Settings, load_settings, save_settings
@@ -310,6 +310,34 @@ class SensorTests(unittest.TestCase):
 
 
 class InterfaceTests(unittest.TestCase):
+    def test_accent_is_red_across_navigation_and_menus(self):
+        session = session_for(SwimSet("FR", 50, 1, 60))
+        detector = OccupancyDetector(DetectionConfig())
+        navigation = Navigation()
+        settings = Settings()
+        accent = (255, 75, 75)
+        self.assertEqual(COLORS["accent"], accent)
+
+        image = render_frame(session, detector, 0, navigation=navigation, settings=settings)
+        self.assertEqual(image.getpixel((4, 3)), accent)
+        self.assertEqual(image.getpixel((8, 35)), accent)
+        navigation.screen = "settings"
+        image = render_frame(session, detector, 0, navigation=navigation, settings=settings)
+        self.assertEqual(image.getpixel((5, 3)), accent)
+        self.assertEqual(image.getpixel((4, 20)), accent)
+        navigation.screen = "select"
+        image = render_frame(session, detector, 0, navigation=navigation, settings=settings)
+        self.assertEqual(image.getpixel((4, 3)), accent)
+
+        session.confirm(0)
+        image = render_frame(session, detector, 0, menu_index=0)
+        self.assertEqual(image.getpixel((8, 17)), accent)
+        image = render_frame(session, detector, 0, menu_index=4)
+        self.assertEqual(image.getpixel((5, 46)), accent)
+        image = render_frame(session, detector, 0, clock=datetime(2026, 1, 1))
+        self.assertEqual(image.getpixel((4, 44)), COLORS["freestyle"])
+        self.assertEqual(image.getpixel((51, 25)), COLORS["breaststroke"])
+
     def test_render_each_workout_phase(self):
         session = session_for(SwimSet("FR", 50, 1, 60))
         detector = OccupancyDetector(DetectionConfig())

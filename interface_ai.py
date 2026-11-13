@@ -13,6 +13,7 @@ COLORS = {
     "white":      (235, 242, 250),
     "muted":      (115, 130, 148),
     "divider":    (48, 59, 73),
+    "accent":     (255, 75, 75),
     "freestyle":  (35, 230, 115),
     "backstroke": (55, 135, 255),
     "breaststroke": (255, 75, 75),
@@ -179,23 +180,23 @@ def render_frame(session, detector, now, menu_index=None, clock=None, *,
     image = Image.new("RGB", (128, 64), COLORS["background"])
     draw = ImageDraw.Draw(image)
     white, muted = COLORS["white"], COLORS["muted"]
-    green, red = COLORS["freestyle"], COLORS["breaststroke"]
+    accent, red = COLORS["accent"], COLORS["breaststroke"]
 
     def text(x, y, value, color=white, scale=1):
         draw_bitmap_text(draw, (x, y), value, color, scale=scale)
 
     if navigation is not None and navigation.screen == "home":
-        text(4, 3, "TOUCHLINE", green, 2)
+        text(4, 3, "TOUCHLINE", accent, 2)
         text(4, 19, "SWIM TRAINER", muted)
         draw.line((4, 28, 123, 28), fill=COLORS["divider"])
         for i, item in enumerate(HOME_ITEMS):
             text(8, 33 + i * 10, ("- " if i == navigation.home_index else "  ") + item,
-                 green if i == navigation.home_index else white)
+                 accent if i == navigation.home_index else white)
         text(4, 57, "SENSOR ERROR" if detector.fault else "ARROWS MOVE  OK SELECT",
              red if detector.fault else muted)
         return image
     if navigation is not None and navigation.screen == "settings":
-        text(4, 3, "SETTINGS", green)
+        text(4, 3, "SETTINGS", accent)
         text(79, 3, "EDIT" if navigation.editing else "SELECT", muted)
         draw.line((4, 12, 123, 12), fill=COLORS["divider"])
         first = max(0, min(navigation.settings_index - 1, len(SETTING_ITEMS) - 3))
@@ -206,7 +207,7 @@ def render_frame(session, detector, now, menu_index=None, clock=None, *,
                 value = "ON" if value else "OFF"
             selected = index == navigation.settings_index
             text(4, 18 + row * 11, ("- " if selected else "  ") + label,
-                 green if selected else white)
+                 accent if selected else white)
             text(96, 18 + row * 11, str(value), white)
         text(4, 57, "INVALID OR SAVE ERROR" if navigation.error else
              ("ARROWS CHANGE  OK DONE" if navigation.editing else "ARROWS MOVE  OK SELECT"),
@@ -221,18 +222,18 @@ def render_frame(session, detector, now, menu_index=None, clock=None, *,
             action = MENU_ITEMS[menu_index - len(MENU_ITEMS)]
             text(4, 3, "CONFIRM ACTION", muted)
             text(4, 20, action, white, 2)
-            text(4, 46, "OK CONFIRMS", green)
+            text(4, 46, "OK CONFIRMS", accent)
             text(4, 57, "ARROWS CANCEL", muted)
             return image
         text(4, 3, "WORKOUT MENU", muted)
         for i, item in enumerate(MENU_ITEMS):
             text(8, 15 + i * 10, ("- " if i == menu_index else "  ") + item,
-                 green if i == menu_index else white)
+                 accent if i == menu_index else white)
         text(4, 57, "SENSOR ERROR" if detector.fault else "ARROWS MOVE  OK SELECT",
              red if detector.fault else muted)
         return image
     if session.phase == Phase.SELECT:
-        text(4, 3, "TOUCHLINE", green)
+        text(4, 3, "TOUCHLINE", accent)
         text(4, 17, "SELECT WORKOUT", muted)
         is_back = navigation is not None and navigation.select_index == len(session.workouts)
         text(4, 29, "BACK" if is_back else session.workout.name, white, 2)
