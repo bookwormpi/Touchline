@@ -12,7 +12,7 @@ DEAD_ZONES = frozenset({
 })
 
 # Example values only: calibrate and validate at the actual pool.
-ENTER_MM = 100
+ENTER_MM = 300
 EXIT_MM = 3999
 MIN_ZONES = 3
 MAX_DISTANCE_MM = 4000
