@@ -187,6 +187,7 @@ class ButtonInput:
                     and now - self.changed_at[name] >= self.debounce):
                 self.stable[name] = pressed
                 if pressed:
+                    LOG.info("Button pressed: %s", name.upper())
                     self.pressed_at[name] = now
                     if name != "ok":
                         events.append(name)
@@ -199,6 +200,7 @@ class ButtonInput:
             if (name == "ok" and self.stable[name] and not self.held
                     and now - self.pressed_at[name] >= self.hold):
                 self.held = True
+                LOG.info("Button held: OK")
                 events.append("hold")
         return events
 

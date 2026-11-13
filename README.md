@@ -149,7 +149,8 @@ Hold OK deliberately: standby resets the current workout and its history.
    The matrix driver often requires elevated privileges. Run from this
    directory with the Python environment containing all the dependencies.
    The application keeps privileges for I2C access. Check the terminal or
-   service logs for sensor and audio errors. Stop with Ctrl+C.
+   service logs for sensor and audio errors. Debounced button presses and OK
+   holds are logged at INFO level. Stop with Ctrl+C.
 
 Install VLC's native library with `sudo apt install libvlc5 vlc-plugin-base`
 and place your own MP3 files at `sounds/start.mp3` and `sounds/wall.mp3` in

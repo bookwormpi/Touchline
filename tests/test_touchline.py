@@ -383,6 +383,44 @@ class InterfaceTests(unittest.TestCase):
         self.assertIsNone(handle_button("ok", session, 1, menu))
         self.assertEqual(session.phase, Phase.COMPLETE)
 
+    def test_button_press_logging_is_debounced_and_hold_is_reported_once(self):
+        buttons = {name: types.SimpleNamespace(is_pressed=False)
+                   for name in ("prev", "next", "ok")}
+        inputs = ButtonInput(buttons, debounce=0.05, hold=1.5)
+        with self.assertLogs("touchline", level="INFO") as logs:
+            buttons["prev"].is_pressed = True
+            self.assertEqual(inputs.poll(0), [])
+            buttons["prev"].is_pressed = False
+            self.assertEqual(inputs.poll(0.01), [])
+            buttons["prev"].is_pressed = True
+            self.assertEqual(inputs.poll(0.02), [])
+            self.assertEqual(inputs.poll(0.08), ["prev"])
+            self.assertEqual(inputs.poll(0.2), [])
+            buttons["next"].is_pressed = True
+            self.assertEqual(inputs.poll(0.3), [])
+            self.assertEqual(inputs.poll(0.4), ["next"])
+            buttons["ok"].is_pressed = True
+            self.assertEqual(inputs.poll(0.5), [])
+            self.assertEqual(inputs.poll(0.6), [])
+            buttons["ok"].is_pressed = False
+            self.assertEqual(inputs.poll(0.7), [])
+            self.assertEqual(inputs.poll(0.8), ["ok"])
+            buttons["ok"].is_pressed = True
+            self.assertEqual(inputs.poll(1.0), [])
+            self.assertEqual(inputs.poll(1.1), [])
+            self.assertEqual(inputs.poll(2.7), ["hold"])
+            self.assertEqual(inputs.poll(3.0), [])
+            buttons["ok"].is_pressed = False
+            self.assertEqual(inputs.poll(3.1), [])
+            self.assertEqual(inputs.poll(3.2), [])
+        self.assertEqual(logs.output, [
+            "INFO:touchline:Button pressed: PREV",
+            "INFO:touchline:Button pressed: NEXT",
+            "INFO:touchline:Button pressed: OK",
+            "INFO:touchline:Button pressed: OK",
+            "INFO:touchline:Button held: OK",
+        ])
+
     def test_main_loop_draws_and_releases_hardware(self):
         matrix = Mock()
         sensor = Mock()
