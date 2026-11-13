@@ -9,7 +9,7 @@ from unittest.mock import Mock, patch
 from audio import Audio
 from detection import DetectionConfig, OccupancyDetector, occupancy_readings
 from interface_ai import COLORS, create_matrix, render_frame
-from main import ButtonInput, handle_button, make_sensor, read_grid, run
+from main import ButtonInput, handle_button, make_sensor, parse_args, read_grid, run
 from navigation import Navigation
 from settings import Settings, load_settings, save_settings
 from workout import Phase, SwimSet, Workout, WorkoutSession
@@ -580,40 +580,49 @@ class InterfaceTests(unittest.TestCase):
             button.close.assert_called_once()
         self.assertEqual([call.args[0] for call in gpio.Button.call_args_list], [19, 25])
 
-    def test_main_loop_plays_start_initial_wall_and_arrival_cues(self):
-        matrix = Mock()
-        sensor = Mock()
-        sensor.check_data_ready.return_value = True
-        i2c = Mock()
-        clock = [100.0]
-        near = [[(500, True)] * 8 for _ in range(8)]
-        far = [[(1500, True)] * 8 for _ in range(8)]
-        def grid(_sensor):
-            elapsed = clock[0] - 100
-            return near if elapsed < 1 or elapsed >= 2 else far
-        def sleep(_duration):
-            clock[0] += 0.2
-            if clock[0] > 103:
-                raise KeyboardInterrupt
-        inputs = Mock()
-        inputs.poll.side_effect = [["ok"], ["ok"]] + [[]] * 30
-        args = types.SimpleNamespace(
-            settings_file="/nonexistent/touchline/settings.json",
-            sounds_dir="/nonexistent/touchline/sounds",
-            prev_pin=18, next_pin=19, ok_pin=25)
-        gpio = types.SimpleNamespace(Button=Mock(return_value=Mock(is_pressed=False)))
-        with patch.dict(sys.modules, {"gpiozero": gpio}), \
-                patch("main.create_matrix", return_value=matrix), \
-                patch("main.Audio") as audio, \
-                patch("main.ButtonInput", return_value=inputs), \
-                patch("main.make_sensor", return_value=(sensor, i2c)), \
-                patch("main.read_grid", side_effect=grid), \
-                patch("main.time.monotonic", side_effect=lambda: clock[0]), \
-                patch("main.time.sleep", side_effect=sleep):
-            with self.assertRaises(KeyboardInterrupt):
-                run(args)
-        self.assertEqual([call.args[0] for call in audio.return_value.play.call_args_list],
-                         ["start", "wall", "wall"])
+    def test_main_loop_plays_start_and_completed_lap_cues(self):
+        for sound, distance in ((True, 25), (True, 50), (False, 50)):
+            with self.subTest(sound=sound, distance=distance):
+                matrix = Mock()
+                sensor = Mock()
+                sensor.check_data_ready.return_value = True
+                i2c = Mock()
+                clock = [100.0]
+                near = [[(500, True)] * 8 for _ in range(8)]
+                far = [[(1500, True)] * 8 for _ in range(8)]
+
+                def grid(_sensor):
+                    elapsed = clock[0] - 100
+                    return near if elapsed < 1 or elapsed >= 2 else far
+
+                def sleep(_duration):
+                    clock[0] += 0.2
+                    if clock[0] > 103:
+                        raise KeyboardInterrupt
+
+                inputs = Mock()
+                inputs.poll.side_effect = [["ok"], ["ok"]] + [[]] * 30
+                session = session_for(SwimSet("FR", distance, 2 if distance == 25 else 1, 60))
+                args = types.SimpleNamespace(
+                    settings_file="/nonexistent/touchline/settings.json",
+                    sounds_dir="/nonexistent/touchline/sounds",
+                    next_pin=19, ok_pin=25)
+                gpio = types.SimpleNamespace(Button=Mock(return_value=Mock(is_pressed=False)))
+                with patch.dict(sys.modules, {"gpiozero": gpio}), \
+                        patch("main.create_matrix", return_value=matrix), \
+                        patch("main.Audio") as audio, \
+                        patch("main.WorkoutSession", return_value=session), \
+                        patch("main.load_settings", return_value=Settings(sound=sound)), \
+                        patch("main.ButtonInput", return_value=inputs), \
+                        patch("main.make_sensor", return_value=(sensor, i2c)), \
+                        patch("main.read_grid", side_effect=grid), \
+                        patch("main.time.monotonic", side_effect=lambda: clock[0]), \
+                        patch("main.time.sleep", side_effect=sleep):
+                    with self.assertRaises(KeyboardInterrupt):
+                        run(args)
+                self.assertEqual(session.phase, Phase.COMPLETE)
+                self.assertEqual([call.args[0] for call in audio.return_value.play.call_args_list],
+                                 ["timestart", "lapchime"] if sound else [])
 
     def test_main_loop_reconnects_after_incomplete_frame(self):
         matrix = Mock()
@@ -759,6 +768,28 @@ class SettingsAndNavigationTests(unittest.TestCase):
                 audio.close()
                 player.release.assert_called_once()
                 instance.release.assert_called_once()
+
+    def test_bundled_audio_files_resolve_from_default_and_override_directory(self):
+        instance = Mock()
+        player = instance.media_player_new.return_value
+        player.event_manager.return_value.event_attach.return_value = 0
+        vlc = types.SimpleNamespace(Instance=Mock(return_value=instance),
+                                    EventType=types.SimpleNamespace(MediaPlayerEncounteredError=1))
+        with patch("sys.argv", ["main.py"]):
+            args = parse_args()
+        self.assertEqual(Path(args.sounds_dir), Path(__file__).resolve().parent.parent / "audio")
+        for cue in ("timestart", "lapchime"):
+            self.assertTrue((Path(args.sounds_dir) / f"{cue}.mp3").is_file())
+        with patch.dict(sys.modules, {"vlc": vlc}):
+            audio = Audio(args.sounds_dir)
+            for cue in ("timestart", "lapchime"):
+                audio.play(cue)
+            self.assertEqual([call.args[0] for call in instance.media_new.call_args_list],
+                             [str((Path(args.sounds_dir) / f"{cue}.mp3").resolve())
+                              for cue in ("timestart", "lapchime")])
+            audio.close()
+        with patch("sys.argv", ["main.py", "--sounds-dir", "/custom/sounds"]):
+            self.assertEqual(parse_args().sounds_dir, "/custom/sounds")
 
 
 if __name__ == "__main__":
