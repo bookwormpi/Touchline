@@ -6,14 +6,14 @@ OK_PIN = 18
 
 # Rotation is clockwise; dead-zone coordinates are (row, column) after rotation,
 # zero-based from the top left of the grid printed by the calibration tool.
-ROTATION_DEGREES = 90  # 0, 90, 180 or 270
+ROTATION_DEGREES = 0  # 0, 90, 180 or 270
 DEAD_ZONES = frozenset({
     # (0, 0),
 })
 
 # Example values only: calibrate and validate at the actual pool.
-ENTER_MM = 1000
-EXIT_MM = 1200
+ENTER_MM = 100
+EXIT_MM = 4000
 MIN_ZONES = 3
 MAX_DISTANCE_MM = 4000
 ENTER_SECONDS = 0.3
