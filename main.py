@@ -22,7 +22,7 @@ LOG = logging.getLogger("touchline")
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--settings-file", default="/var/lib/touchline/settings.json")
-    parser.add_argument("--sounds-dir", default=str(Path(__file__).resolve().parent / "audio"))
+    parser.add_argument("--sounds-dir", default=str(Path(__file__).resolve().parent / "sounds"))
     parser.add_argument("--log-level", choices=("INFO", "DEBUG"), default="INFO")
     parser.add_argument("--log-file", help="append detailed logs to this file")
     args = parser.parse_args()
@@ -298,7 +298,7 @@ def run(args):
                     if previous_screen == "select" and navigation.screen == "workout":
                         session.confirm(now)
                         if session.tick(now) and settings.sound:
-                            audio.play("timestart")
+                            audio.play("start")
                     if event == "hold":
                         menu = None
                 else:
@@ -338,12 +338,13 @@ def run(args):
                         LOG.debug("Sensor frame active_valid=%d/%d near=%d",
                                   valid_count, 64 - len(detector.dead_zones),
                                   sum(value <= detector.config.enter_mm for value in readings))
+                        previous_occupancy = detector.occupied
                         event = detector.update(grid, now)
+                        if settings.sound and (event == "arrived" or
+                                               (previous_occupancy is None and detector.occupied is True)):
+                            audio.play("wall")
                         if event:
-                            previous_completed = session.completed
                             session.sensor_event(event, now)
-                            if settings.sound and session.completed > previous_completed:
-                                audio.play("lapchime")
                             if session.phase in (Phase.BREAK, Phase.COMPLETE):
                                 menu = None
                     if (detector.check_timeout(now)
@@ -375,7 +376,7 @@ def run(args):
                     previous_report = now
             if session.tick(now):
                 if settings.sound:
-                    audio.play("timestart")
+                    audio.play("start")
             if now - last_draw >= 0.1:
                 canvas.SetImage(render_frame(session, detector, now, menu,
                                              navigation=navigation, settings=settings))

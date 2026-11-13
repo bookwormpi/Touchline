@@ -27,10 +27,10 @@ water; follow local electrical and pool-safety rules.
   trip, `LAST REP` and `--:--` indicate that no further send-off is scheduled.
   A set may instead specify a rest period for a late arrival. The next
   send-off is based on the **actual** detected departure, not the previous
-  planned time. When sound is enabled, `timestart.mp3` plays at each scheduled
-  send-off, including the assumed far-end departure. `lapchime.mp3` plays once
-  when a detected wall arrival completes a 50 or a pair of 25s. Initial wall
-  presence and re-establishing sensor state do not count as completed laps.
+  planned time. When sound is enabled, the start MP3 plays at each scheduled
+  send-off, including the assumed far-end departure. The wall MP3 plays on a
+  debounced arrival and when wall presence is initially established, including
+  after a sensor reconnection.
 - Pauses between sets until OK is pressed. A menu permits extra rest, manually
   completing a set, or ending a workout; completion and exit require
   confirmation. A manual completion does not invent any missing splits.
@@ -155,10 +155,10 @@ Hold OK deliberately: standby resets the current workout and its history.
    service logs for sensor and audio errors. Debounced button presses and
    holds are logged at INFO level. Stop with Ctrl+C.
 
-Install VLC's native library with `sudo apt install libvlc5 vlc-plugin-base`.
-The default cue files are `audio/timestart.mp3` and `audio/lapchime.mp3`;
-`--sounds-dir` selects another directory containing files with those names.
-Sound is enabled by default and can be disabled in settings.
+Install VLC's native library with `sudo apt install libvlc5 vlc-plugin-base`
+and place your own MP3 files at `sounds/start.mp3` and `sounds/wall.mp3` in
+the application directory. These files are not included. `--sounds-dir` selects
+another directory. Sound is enabled by default and can be disabled in settings.
 Audio errors and missing files are logged; they do not stop the timer. Configure
 and test the Pi's audio output for the account running the application, including
 when using sudo.
