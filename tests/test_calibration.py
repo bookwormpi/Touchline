@@ -29,13 +29,16 @@ class RotationAndMaskTests(unittest.TestCase):
         self.assertTrue(detector.check_timeout(10.02))
 
     def test_button_pins_from_configuration(self):
-        with patch("sys.argv", ["main.py"]):
+        with patch("sys.argv", ["main.py"]), patch("sensor_config.NEXT_PIN", 19), \
+                patch("sensor_config.OK_PIN", 18):
             args = parse_args()
-        self.assertEqual((args.prev_pin, args.next_pin, args.ok_pin), (18, 19, 25))
-        with patch("sys.argv", ["main.py"]), patch("sensor_config.NEXT_PIN", 18), \
-                contextlib.redirect_stderr(io.StringIO()):
-            with self.assertRaises(SystemExit):
-                parse_args()
+        self.assertEqual((args.next_pin, args.ok_pin), (19, 18))
+        for invalid in (18, 2, 28, -1):
+            with self.subTest(pin=invalid), patch("sys.argv", ["main.py"]), \
+                    patch("sensor_config.NEXT_PIN", invalid), patch("sensor_config.OK_PIN", 18), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    parse_args()
 
     def test_clockwise_rotation_coordinates(self):
         source = [[(y * 8 + x, True) for x in range(8)] for y in range(8)]

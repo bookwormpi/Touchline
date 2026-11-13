@@ -1,7 +1,7 @@
 # Touchline swim trainer
 
 Touchline connects a VL53L8CX 8x8 time-of-flight sensor, a 128x64 HUB75 RGB
-matrix with an Adafruit RGB Matrix Bonnet, and three buttons to a Raspberry Pi.
+matrix with an Adafruit RGB Matrix Bonnet, and two buttons to a Raspberry Pi.
 The sensor is mounted above the starting-block end and looks down into the
 swimmer's approach area. Workouts are defined in code, not stored remotely.
 
@@ -67,9 +67,9 @@ perform yard/meter conversion.
 
 ## Controls
 
-Wire three normally-open momentary switches between their selected GPIO inputs
+Wire two normally-open momentary switches between their selected GPIO inputs
 and ground. Inputs use pull-ups and are active low. Never connect a button
-input to 5 V. Choose **three distinct free BCM GPIO numbers** after checking the
+input to 5 V. Choose **two distinct free BCM GPIO numbers** after checking the
 exact bonnet, its configuration, Pi, and other peripherals. GPIO 2 and 3 are
 reserved for I2C and are rejected; the application cannot detect all other
 bonnet conflicts for you.
@@ -82,14 +82,17 @@ choosing pins.
 
 | Button | Action |
 | --- | --- |
-| PREV / NEXT | Navigate home, settings or workouts; open the workout menu during a workout |
-| OK | Confirm selection, edit a setting, start a workout, or advance after a set |
+| Tap NEXT | Move forward or increase a setting; open the workout menu during a workout |
+| Hold NEXT for 0.7 seconds | Move backward or decrease a setting; open the workout menu during a workout |
+| Tap OK | Confirm selection, edit a setting, start a workout, or advance after a set |
 | Hold OK for 1.5 seconds | Enter standby, abandoning the current workout |
-| OK in standby | Wake to the home screen |
+| Tap OK in standby | Wake to the home screen |
+
+Taps take effect after release. Holds trigger once and do not also produce a tap.
 
 The start screen offers `WORKOUT` and `SETTINGS`. Choose a workout with the
-arrows and OK, or choose `BACK` to return home. In settings, use the arrows to
-choose an item and OK to edit it; arrows change the value and OK finishes
+NEXT and OK, or choose `BACK` to return home. In settings, use NEXT to
+choose an item and OK to edit it; tap or hold NEXT to change the value and OK finishes
 editing. Select `BACK` to return home. Brightness and sound are saved immediately.
 Save errors appear on screen and in the log. Settings are stored in
 `/var/lib/touchline/settings.json` by default; use `--settings-file` to choose
@@ -100,7 +103,7 @@ and sound are retained. The former sensor command-line overrides were removed.
 `EXTRA REST` moves the due time to the later of now or the existing send-off,
 then adds the current set's configured extra-rest duration. It works while
 waiting for departure, not while swimming. To mark a set complete, open the
-menu, select `COMPLETE SET`, then confirm with OK. Press either arrow to cancel
+menu, select `COMPLETE SET`, then confirm with OK. Tap or hold NEXT to cancel
 the confirmation. `END WORKOUT` works similarly.
 
 Standby is **software standby only**: the Pi, sensor and software remain
@@ -136,8 +139,8 @@ Hold OK deliberately: standby resets the current workout and its history.
    LPN reset pin, which is not configured by this project. Depending
    on the Pi and gpiozero version, a supported gpiozero pin backend must also
    be installed/configured.
-3. Connect and verify the three buttons and the I2C sensor. The BCM button
-   pins are defined in `sensor_config.py`: PREV 18, NEXT 19, and OK 25. Check
+3. Connect and verify the two buttons and the I2C sensor. The BCM button
+   pins are defined in `sensor_config.py`: NEXT 19 and OK 18. Check
    them against your actual hardware and edit that file if needed. Run:
 
    ```sh
@@ -149,7 +152,7 @@ Hold OK deliberately: standby resets the current workout and its history.
    The matrix driver often requires elevated privileges. Run from this
    directory with the Python environment containing all the dependencies.
    The application keeps privileges for I2C access. Check the terminal or
-   service logs for sensor and audio errors. Debounced button presses and OK
+   service logs for sensor and audio errors. Debounced button presses and
    holds are logged at INFO level. Stop with Ctrl+C.
 
 Install VLC's native library with `sudo apt install libvlc5 vlc-plugin-base`

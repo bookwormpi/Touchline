@@ -192,7 +192,7 @@ def render_frame(session, detector, now, menu_index=None, clock=None, *,
         for i, item in enumerate(HOME_ITEMS):
             text(8, 33 + i * 10, ("- " if i == navigation.home_index else "  ") + item,
                  accent if i == navigation.home_index else white)
-        text(4, 57, "SENSOR ERROR" if detector.fault else "ARROWS MOVE  OK SELECT",
+        text(4, 57, "SENSOR ERROR" if detector.fault else "NEXT MOVE HOLD BACK OK SELECT",
              red if detector.fault else muted)
         return image
     if navigation is not None and navigation.screen == "settings":
@@ -210,7 +210,8 @@ def render_frame(session, detector, now, menu_index=None, clock=None, *,
                  accent if selected else white)
             text(96, 18 + row * 11, str(value), white)
         text(4, 57, "INVALID OR SAVE ERROR" if navigation.error else
-             ("ARROWS CHANGE  OK DONE" if navigation.editing else "ARROWS MOVE  OK SELECT"),
+             ("NEXT UP HOLD DOWN OK DONE" if navigation.editing else
+              "NEXT MOVE HOLD BACK OK SELECT"),
              red if navigation.error else muted)
         return image
     if session.phase == Phase.STANDBY:
@@ -223,13 +224,13 @@ def render_frame(session, detector, now, menu_index=None, clock=None, *,
             text(4, 3, "CONFIRM ACTION", muted)
             text(4, 20, action, white, 2)
             text(4, 46, "OK CONFIRMS", accent)
-            text(4, 57, "ARROWS CANCEL", muted)
+            text(4, 57, "NEXT CANCEL", muted)
             return image
         text(4, 3, "WORKOUT MENU", muted)
         for i, item in enumerate(MENU_ITEMS):
             text(8, 15 + i * 10, ("- " if i == menu_index else "  ") + item,
                  accent if i == menu_index else white)
-        text(4, 57, "SENSOR ERROR" if detector.fault else "ARROWS MOVE  OK SELECT",
+        text(4, 57, "SENSOR ERROR" if detector.fault else "NEXT MOVE HOLD BACK OK SELECT",
              red if detector.fault else muted)
         return image
     if session.phase == Phase.SELECT:
@@ -240,7 +241,7 @@ def render_frame(session, detector, now, menu_index=None, clock=None, *,
         text(4, 49, "SENSOR ERROR" if detector.fault else
              ("RETURN HOME" if is_back else f"{len(session.workout.sets)} SETS"),
              red if detector.fault else muted)
-        text(4, 57, "ARROWS MOVE  OK START", muted)
+        text(4, 57, "NEXT MOVE HOLD BACK OK START", muted)
         return image
 
     draw_workout_view(draw, session, detector, now, clock or datetime.now())

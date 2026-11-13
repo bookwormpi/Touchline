@@ -338,6 +338,27 @@ class InterfaceTests(unittest.TestCase):
         self.assertEqual(image.getpixel((4, 44)), COLORS["freestyle"])
         self.assertEqual(image.getpixel((51, 25)), COLORS["breaststroke"])
 
+    def test_two_button_navigation_guidance_is_displayed(self):
+        session = session_for(SwimSet("FR", 50, 1, 60))
+        detector = OccupancyDetector(DetectionConfig())
+        detector.fault = False
+        navigation = Navigation()
+        settings = Settings()
+        with patch("interface_ai.draw_bitmap_text") as draw:
+            render_frame(session, detector, 0, navigation=navigation, settings=settings)
+            self.assertIn("NEXT MOVE HOLD BACK OK SELECT",
+                          [call.args[2] for call in draw.call_args_list])
+            draw.reset_mock()
+            navigation.screen = "settings"
+            navigation.editing = True
+            render_frame(session, detector, 0, navigation=navigation, settings=settings)
+            self.assertIn("NEXT UP HOLD DOWN OK DONE",
+                          [call.args[2] for call in draw.call_args_list])
+            draw.reset_mock()
+            session.confirm(0)
+            render_frame(session, detector, 0, menu_index=4)
+            self.assertIn("NEXT CANCEL", [call.args[2] for call in draw.call_args_list])
+
     def test_render_each_workout_phase(self):
         session = session_for(SwimSet("FR", 50, 1, 60))
         detector = OccupancyDetector(DetectionConfig())
@@ -364,7 +385,7 @@ class InterfaceTests(unittest.TestCase):
 
     def test_buttons_and_menu_confirmation(self):
         ok = types.SimpleNamespace(is_pressed=False)
-        inputs = ButtonInput({"ok": ok}, debounce=0.05, hold=1.5)
+        inputs = ButtonInput({"ok": ok}, debounce=0.05, ok_hold=1.5)
         ok.is_pressed = True
         self.assertEqual(inputs.poll(1), [])
         self.assertEqual(inputs.poll(1.1), [])
@@ -385,18 +406,18 @@ class InterfaceTests(unittest.TestCase):
 
     def test_button_press_logging_is_debounced_and_hold_is_reported_once(self):
         buttons = {name: types.SimpleNamespace(is_pressed=False)
-                   for name in ("prev", "next", "ok")}
-        inputs = ButtonInput(buttons, debounce=0.05, hold=1.5)
+                   for name in ("next", "ok")}
+        inputs = ButtonInput(buttons, debounce=0.05)
         with self.assertLogs("touchline", level="INFO") as logs:
-            buttons["prev"].is_pressed = True
-            self.assertEqual(inputs.poll(0), [])
-            buttons["prev"].is_pressed = False
-            self.assertEqual(inputs.poll(0.01), [])
-            buttons["prev"].is_pressed = True
-            self.assertEqual(inputs.poll(0.02), [])
-            self.assertEqual(inputs.poll(0.08), ["prev"])
-            self.assertEqual(inputs.poll(0.2), [])
             buttons["next"].is_pressed = True
+            self.assertEqual(inputs.poll(0), [])
+            buttons["next"].is_pressed = False
+            self.assertEqual(inputs.poll(0.01), [])
+            buttons["next"].is_pressed = True
+            self.assertEqual(inputs.poll(0.02), [])
+            self.assertEqual(inputs.poll(0.08), [])
+            self.assertEqual(inputs.poll(0.2), [])
+            buttons["next"].is_pressed = False
             self.assertEqual(inputs.poll(0.3), [])
             self.assertEqual(inputs.poll(0.4), ["next"])
             buttons["ok"].is_pressed = True
@@ -414,19 +435,128 @@ class InterfaceTests(unittest.TestCase):
             self.assertEqual(inputs.poll(3.1), [])
             self.assertEqual(inputs.poll(3.2), [])
         self.assertEqual(logs.output, [
-            "INFO:touchline:Button pressed: PREV",
             "INFO:touchline:Button pressed: NEXT",
             "INFO:touchline:Button pressed: OK",
             "INFO:touchline:Button pressed: OK",
             "INFO:touchline:Button held: OK",
         ])
 
+    def test_next_hold_sends_prev_without_tap_and_resets_after_release(self):
+        next_button = types.SimpleNamespace(is_pressed=False)
+        inputs = ButtonInput({"next": next_button})
+        next_button.is_pressed = True
+        self.assertEqual(inputs.poll(0), [])
+        self.assertEqual(inputs.poll(0.1), [])
+        self.assertEqual(inputs.poll(0.79), [])
+        self.assertEqual(inputs.poll(0.81), ["prev"])
+        self.assertEqual(inputs.poll(1.0), [])
+        next_button.is_pressed = False
+        self.assertEqual(inputs.poll(1.1), [])
+        self.assertEqual(inputs.poll(1.2), [])
+        next_button.is_pressed = True
+        self.assertEqual(inputs.poll(1.3), [])
+        self.assertEqual(inputs.poll(1.4), [])
+        next_button.is_pressed = False
+        self.assertEqual(inputs.poll(1.5), [])
+        self.assertEqual(inputs.poll(1.6), ["next"])
+
+    def test_hold_is_recognized_on_release_if_polling_was_delayed(self):
+        for name, duration, event in (("next", 0.8, "prev"), ("ok", 1.6, "hold")):
+            button = types.SimpleNamespace(is_pressed=False)
+            inputs = ButtonInput({name: button})
+            button.is_pressed = True
+            self.assertEqual(inputs.poll(0), [])
+            self.assertEqual(inputs.poll(0.1), [])
+            button.is_pressed = False
+            self.assertEqual(inputs.poll(0.1 + duration), [])
+            self.assertEqual(inputs.poll(0.2 + duration), [event])
+
+    def test_release_before_hold_does_not_turn_into_hold_during_debounce(self):
+        button = types.SimpleNamespace(is_pressed=False)
+        inputs = ButtonInput({"next": button})
+        button.is_pressed = True
+        inputs.poll(0)
+        inputs.poll(0.1)
+        button.is_pressed = False
+        self.assertEqual(inputs.poll(0.79), [])
+        self.assertEqual(inputs.poll(0.81), [])
+        self.assertEqual(inputs.poll(0.85), ["next"])
+
+    def test_two_button_gestures_drive_navigation_settings_and_workout(self):
+        buttons = {name: types.SimpleNamespace(is_pressed=False) for name in ("next", "ok")}
+        inputs = ButtonInput(buttons)
+        navigation = Navigation()
+        session = session_for(SwimSet("FR", 50, 1, 60))
+        settings = Settings()
+        saved = []
+        now = 0.0
+        menu = None
+
+        def gesture(name, duration):
+            nonlocal now, settings, menu
+            button = buttons[name]
+            button.is_pressed = True
+            inputs.poll(now)
+            now += 0.1
+            events = inputs.poll(now)
+            now += duration
+            events += inputs.poll(now)
+            button.is_pressed = False
+            now += 0.01
+            events += inputs.poll(now)
+            now += 0.1
+            events += inputs.poll(now)
+            for event in events:
+                if navigation.screen != "workout" or event == "hold":
+                    previous_screen = navigation.screen
+                    settings = navigation.button(event, session, settings, saved.append)
+                    if previous_screen == "select" and navigation.screen == "workout":
+                        session.confirm(now)
+                    if event == "hold":
+                        menu = None
+                else:
+                    menu = handle_button(event, session, now, menu)
+            now += 0.1
+            return events
+
+        self.assertEqual(gesture("next", 0.1), ["next"])
+        self.assertEqual(gesture("ok", 0.1), ["ok"])
+        self.assertEqual(navigation.screen, "settings")
+        gesture("ok", 0.1)
+        self.assertTrue(navigation.editing)
+        self.assertEqual(gesture("next", 0.8), ["prev"])
+        self.assertEqual(settings.brightness, 90)
+        gesture("next", 0.1)
+        self.assertEqual(settings.brightness, 100)
+        gesture("ok", 0.1)
+        gesture("next", 0.8)
+        gesture("ok", 0.1)
+        self.assertEqual(navigation.screen, "home")
+        gesture("next", 0.1)
+        gesture("ok", 0.1)
+        self.assertEqual(navigation.screen, "select")
+        gesture("ok", 0.1)
+        self.assertEqual((navigation.screen, session.phase), ("workout", Phase.READY))
+        gesture("next", 0.1)
+        self.assertEqual(menu, 0)
+        gesture("next", 0.8)
+        self.assertEqual(menu, 3)
+        gesture("ok", 0.1)
+        self.assertEqual(menu, 7)
+        gesture("next", 0.1)
+        self.assertEqual(menu, 3)
+        gesture("ok", 1.6)
+        self.assertEqual((navigation.screen, session.phase), ("standby", Phase.STANDBY))
+        gesture("ok", 0.1)
+        self.assertEqual((navigation.screen, session.phase), ("home", Phase.SELECT))
+        self.assertEqual(len(saved), 2)
+
     def test_main_loop_draws_and_releases_hardware(self):
         matrix = Mock()
         sensor = Mock()
         sensor.check_data_ready.return_value = False
         i2c = Mock()
-        buttons = [Mock(is_pressed=False) for _ in range(3)]
+        buttons = [Mock(is_pressed=False) for _ in range(2)]
         gpio = types.SimpleNamespace(Button=Mock(side_effect=buttons))
         args = types.SimpleNamespace(
             settings_file="/nonexistent/touchline/settings.json",
@@ -448,6 +578,7 @@ class InterfaceTests(unittest.TestCase):
         audio.return_value.close.assert_called_once()
         for button in buttons:
             button.close.assert_called_once()
+        self.assertEqual([call.args[0] for call in gpio.Button.call_args_list], [19, 25])
 
     def test_main_loop_plays_start_initial_wall_and_arrival_cues(self):
         matrix = Mock()

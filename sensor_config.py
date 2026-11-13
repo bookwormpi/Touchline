@@ -1,7 +1,6 @@
 """Edit installation-specific sensor calibration and button GPIO values."""
 
-# BCM GPIO numbers for the three normally-open buttons.
-PREV_PIN = 25
+# BCM GPIO numbers for the two normally-open buttons.
 NEXT_PIN = 19
 OK_PIN = 18
 

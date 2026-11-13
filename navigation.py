@@ -1,4 +1,4 @@
-"""Home and settings navigation for the three-button interface."""
+"""Home and settings navigation for the two-button interface."""
 
 from dataclasses import replace
 

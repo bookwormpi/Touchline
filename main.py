@@ -26,13 +26,12 @@ def parse_args():
     parser.add_argument("--log-level", choices=("INFO", "DEBUG"), default="INFO")
     parser.add_argument("--log-file", help="append detailed logs to this file")
     args = parser.parse_args()
-    args.prev_pin = sensor_config.PREV_PIN
     args.next_pin = sensor_config.NEXT_PIN
     args.ok_pin = sensor_config.OK_PIN
-    pins = (args.prev_pin, args.next_pin, args.ok_pin)
+    pins = (args.next_pin, args.ok_pin)
     if (any(type(pin) is not int or pin < 0 or pin > 27 or pin in (2, 3) for pin in pins)
-            or len(set(pins)) != 3):
-        parser.error("sensor_config.py must define three distinct BCM pins in 0..27, "
+            or len(set(pins)) != 2):
+        parser.error("sensor_config.py must define two distinct BCM pins in 0..27, "
                      "excluding I2C pins 2 and 3")
     try:
         sensor_config.create_detector()
@@ -164,17 +163,17 @@ def log_bad_frame(grid, detector, context):
 
 
 class ButtonInput:
-    """Poll and debounce buttons, reporting an OK hold only once."""
+    """Translate debounced NEXT and OK taps and holds into navigation events."""
 
-    def __init__(self, buttons, debounce=0.05, hold=1.5):
+    def __init__(self, buttons, debounce=0.05, next_hold=0.7, ok_hold=1.5):
         self.buttons = buttons
         self.debounce = debounce
-        self.hold = hold
+        self.hold = {"next": next_hold, "ok": ok_hold}
         self.raw = {name: False for name in buttons}
         self.stable = dict(self.raw)
         self.changed_at = {name: 0.0 for name in buttons}
         self.pressed_at = {name: None for name in buttons}
-        self.held = False
+        self.held = {name: False for name in buttons}
 
     def poll(self, now):
         events = []
@@ -189,19 +188,20 @@ class ButtonInput:
                 if pressed:
                     LOG.info("Button pressed: %s", name.upper())
                     self.pressed_at[name] = now
-                    if name != "ok":
-                        events.append(name)
                 else:
-                    if name == "ok" and not self.held:
-                        events.append("ok")
+                    if not self.held[name]:
+                        if self.changed_at[name] - self.pressed_at[name] >= self.hold[name]:
+                            LOG.info("Button held: %s", name.upper())
+                            events.append("prev" if name == "next" else "hold")
+                        else:
+                            events.append(name)
                     self.pressed_at[name] = None
-                    if name == "ok":
-                        self.held = False
-            if (name == "ok" and self.stable[name] and not self.held
-                    and now - self.pressed_at[name] >= self.hold):
-                self.held = True
-                LOG.info("Button held: OK")
-                events.append("hold")
+                    self.held[name] = False
+            if (pressed and self.stable[name] and not self.held[name]
+                    and now - self.pressed_at[name] >= self.hold[name]):
+                self.held[name] = True
+                LOG.info("Button held: %s", name.upper())
+                events.append("prev" if name == "next" else "hold")
         return events
 
 
@@ -278,7 +278,7 @@ def run(args):
     previous_report = time.monotonic()
     stage = "idle"
     try:
-        for name in ("prev", "next", "ok"):
+        for name in ("next", "ok"):
             buttons[name] = Button(getattr(args, f"{name}_pin"), pull_up=True)
         inputs = ButtonInput(buttons)
         canvas = matrix.CreateFrameCanvas()
