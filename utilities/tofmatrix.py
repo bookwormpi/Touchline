@@ -6,7 +6,7 @@ import logging
 import struct
 import time
 
-from calibrate_sensor import print_grid
+from .calibrate_sensor import print_grid
 from ..main import check_sensor_ready, close_sensor, log_bad_frame, make_sensor, read_grid
 from Touchline import sensor_config
 
