@@ -23,15 +23,15 @@ def parse_args():
     parser.add_argument("--log-level", choices=("INFO", "DEBUG"), default="INFO")
     parser.add_argument("--log-file", help="append detailed logs to this file")
     args = parser.parse_args()
-    args.next_pin = sensor_config.NEXT_PIN
-    args.ok_pin = sensor_config.OK_PIN
+    args.next_pin = config.NEXT_PIN
+    args.ok_pin = config.OK_PIN
     pins = (args.next_pin, args.ok_pin)
     if (any(type(pin) is not int or pin < 0 or pin > 27 or pin in (2, 3) for pin in pins)
             or len(set(pins)) != 2):
-        parser.error("sensor_config.py must define two distinct BCM pins in 0..27, "
+        parser.error("config.py must define two distinct BCM pins in 0..27, "
                      "excluding I2C pins 2 and 3")
     try:
-        sensor_config.create_detector()
+        config.create_detector()
     except ValueError as exc:
         parser.error(str(exc))
     return args
@@ -254,10 +254,10 @@ def run(args):
 
     session = WorkoutSession()
     settings = load_settings(args.settings_file, Settings())
-    detector = sensor_config.create_detector()
+    detector = config.create_detector()
     LOG.info("Sensor config: %s rotation=%s dead_zones=%s hz=%s",
              detector.config, detector.rotation, sorted(detector.dead_zones),
-             sensor_config.RANGING_HZ)
+             config.RANGING_HZ)
     navigation = Navigation()
     matrix = create_matrix()
     matrix.brightness = settings.brightness
@@ -303,7 +303,7 @@ def run(args):
             if sensor is None and now >= retry_at:
                 try:
                     stage = "initialization"
-                    sensor, i2c = make_sensor(sensor_config.RANGING_HZ)
+                    sensor, i2c = make_sensor(config.RANGING_HZ)
                     connected_at = time.monotonic()
                     ready_frames = usable_frames = 0
                     last_frame_at = None
