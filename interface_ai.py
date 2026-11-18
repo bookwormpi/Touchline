@@ -4,8 +4,8 @@
 from datetime import datetime
 
 from PIL import Image, ImageDraw
-from navigation import HOME_ITEMS, SETTING_ITEMS
-from workout import Phase
+from .navigation import HOME_ITEMS, SETTING_ITEMS
+from .workout import Phase
 
 # Display colors (RGB)
 COLORS = {
