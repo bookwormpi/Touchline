@@ -7,7 +7,7 @@ import struct
 import time
 
 from ..main import check_sensor_ready, close_sensor, log_bad_frame, make_sensor, read_grid
-from Touchline import sensor_config
+from Touchline import config
 
 LOG = logging.getLogger("touchline")
 
