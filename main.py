@@ -8,7 +8,6 @@ from pathlib import Path
 import struct
 import time
 
-from audio import Audio
 from detection import active_readings, orient_grid
 from interface_ai import MENU_ITEMS, create_matrix, render_frame
 from navigation import Navigation
@@ -22,7 +21,6 @@ LOG = logging.getLogger("touchline")
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--settings-file", default="/var/lib/touchline/settings.json")
-    parser.add_argument("--sounds-dir", default=str(Path(__file__).resolve().parent / "sounds"))
     parser.add_argument("--log-level", choices=("INFO", "DEBUG"), default="INFO")
     parser.add_argument("--log-file", help="append detailed logs to this file")
     args = parser.parse_args()
@@ -264,7 +262,6 @@ def run(args):
     navigation = Navigation()
     matrix = create_matrix()
     matrix.brightness = settings.brightness
-    audio = Audio(args.sounds_dir)
     buttons = {}
     sensor = None
     i2c = None
@@ -297,8 +294,6 @@ def run(args):
                         matrix.brightness = settings.brightness
                     if previous_screen == "select" and navigation.screen == "workout":
                         session.confirm(now)
-                        if session.tick(now) and settings.sound:
-                            audio.play("start")
                     if event == "hold":
                         menu = None
                 else:
@@ -340,9 +335,6 @@ def run(args):
                                   sum(value <= detector.config.enter_mm for value in readings))
                         previous_occupancy = detector.occupied
                         event = detector.update(grid, now)
-                        if settings.sound and (event == "arrived" or
-                                               (previous_occupancy is None and detector.occupied is True)):
-                            audio.play("wall")
                         if event:
                             session.sensor_event(event, now)
                             if session.phase in (Phase.BREAK, Phase.COMPLETE):
@@ -374,9 +366,6 @@ def run(args):
                              "fault=%s occupied=%s", sensor is not None, ready_frames,
                              usable_frames, detector.fault, detector.occupied)
                     previous_report = now
-            if session.tick(now):
-                if settings.sound:
-                    audio.play("start")
             if now - last_draw >= 0.1:
                 canvas.SetImage(render_frame(session, detector, now, menu,
                                              navigation=navigation, settings=settings))
@@ -387,7 +376,6 @@ def run(args):
         close_sensor(sensor, i2c)
         for button in buttons.values():
             button.close()
-        audio.close()
         matrix.Clear()
 
 

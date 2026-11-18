@@ -8,9 +8,9 @@ import statistics
 import struct
 import time
 
-from detection import active_readings, occupancy_distance, orient_grid
-from main import close_sensor, log_bad_frame, make_sensor, read_grid
-import sensor_config
+from ..detection import active_readings, occupancy_distance, orient_grid
+from ..main import close_sensor, log_bad_frame, make_sensor, read_grid
+from Touchline import sensor_config
 
 LOG = logging.getLogger("touchline")
 
