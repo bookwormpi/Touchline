@@ -23,7 +23,7 @@ RANGING_HZ = 10
 
 
 def create_detector():
-    from detection import DetectionConfig, OccupancyDetector
+    from .detection import DetectionConfig, OccupancyDetector
 
     if type(RANGING_HZ) is not int or not 1 <= RANGING_HZ <= 15:
         raise ValueError("RANGING_HZ must be an integer from 1 to 15 for 8x8")
