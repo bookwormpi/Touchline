@@ -11,6 +11,7 @@ import time
 from .detection import active_readings, orient_grid
 from .interface_ai import MENU_ITEMS, create_matrix, render_frame
 from .navigation import Navigation
+from .config import Settings, load_settings
 from Touchline import config
 from .workout import Phase, WorkoutSession
 
