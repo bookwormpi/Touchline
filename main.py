@@ -253,7 +253,7 @@ def run(args):
     from gpiozero import Button
 
     session = WorkoutSession()
-    settings = load_settings(args.settings_file, Settings())
+    settings = config.load_settings(args.settings_file, Settings())
     detector = config.create_detector()
     LOG.info("Sensor config: %s rotation=%s dead_zones=%s hz=%s",
              detector.config, detector.rotation, sorted(detector.dead_zones),
