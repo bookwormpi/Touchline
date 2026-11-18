@@ -6,11 +6,27 @@ import logging
 import struct
 import time
 
-from .calibrate_sensor import print_grid
 from ..main import check_sensor_ready, close_sensor, log_bad_frame, make_sensor, read_grid
 from Touchline import sensor_config
 
 LOG = logging.getLogger("touchline")
+
+def print_grid(grid, detector):
+    oriented = orient_grid(grid, detector.rotation)
+    width = max(5, len(str(detector.config.max_distance_mm)) + 1)
+    print("    " + " ".join(f"{x:>{width}}" for x in range(8)))
+    for y, row in enumerate(oriented):
+        cells = []
+        for x, (distance, valid) in enumerate(row):
+            if (y, x) in detector.dead_zones:
+                cell = "X"
+            else:
+                value = occupancy_distance(distance, valid, detector.config.max_distance_mm)
+                cell = f"{value}{'*' if not valid or distance <= 0 else ''}"
+            cells.append(f"{cell:>{width}}")
+        print(f"{y:>2}  " + " ".join(cells))
+    print("X=dead zone, *=assumed distance for invalid or non-positive reading; values in mm")
+    print("All-invalid frames are assumed clear for occupancy; calibration uses valid readings only.")
 
 
 def main():
